@@ -10,7 +10,7 @@ import SwiftUI
 struct ContentView: View {
     var body: some View {
         NavigationStack {
-            TerminalView()
+            SwiftUITerminalView()
                 .navigationTitle("MobileDev Terminal")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
