@@ -17,6 +17,10 @@ let package = Package(
             name: "SwiftTerm",
             targets: ["SwiftTerm"]
         ),
+        .library(
+            name: "SwiftTermUI",
+            targets: ["SwiftTermUI"]
+        ),
     ],
     dependencies: [],
     targets: [
@@ -39,6 +43,11 @@ let package = Package(
             name: "SwiftTermTests",
             dependencies: ["SwiftTerm"],
             path: "Tests/SwiftTermTests"
+        ),
+        .target(
+            name: "SwiftTermUI",
+            dependencies: ["SwiftTerm"],
+            path: "Sources/SwiftTermUI"
         )
     ],
     swiftLanguageVersions: [.v5]
