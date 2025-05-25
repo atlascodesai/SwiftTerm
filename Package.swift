@@ -5,9 +5,9 @@ import PackageDescription
 let package = Package(
     name: "SwiftTerm",
     platforms: [
-        .iOS(.v13),
-        .macOS(.v10_15),
-        .tvOS(.v13),
+        .iOS(.v17),
+        .macOS(.v14),
+        .tvOS(.v17),
         .visionOS(.v1)
     ],
     products: [
@@ -16,10 +16,6 @@ let package = Package(
         .library(
             name: "SwiftTerm",
             targets: ["SwiftTerm"]
-        ),
-        .library(
-            name: "SwiftTermUI",
-            targets: ["SwiftTermUI"]
         ),
     ],
     dependencies: [],
@@ -43,11 +39,6 @@ let package = Package(
             name: "SwiftTermTests",
             dependencies: ["SwiftTerm"],
             path: "Tests/SwiftTermTests"
-        ),
-        .target(
-            name: "SwiftTermUI",
-            dependencies: ["SwiftTerm"],
-            path: "Sources/SwiftTermUI"
         )
     ],
     swiftLanguageVersions: [.v5]
