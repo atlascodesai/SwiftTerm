@@ -706,6 +706,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             send (EscapeSequences.emacsBack)
         case #selector(moveToRightEndOfLine(_:)):
             send (EscapeSequences.emacsForward)
+        case #selector(deleteToBeginningOfLine(_:)):
+            // Send Ctrl+U to delete to beginning of line
+            send ([0x15])
         default:
             print ("Unhandle selector \(selector)")
         }
