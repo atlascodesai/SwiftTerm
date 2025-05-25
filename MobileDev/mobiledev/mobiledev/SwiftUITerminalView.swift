@@ -11,6 +11,8 @@ import SwiftTerm
 import AppKit
 
 struct SwiftUITerminalView: NSViewRepresentable {
+    @ObservedObject var workflowDetector: WorkflowDetector
+    @ObservedObject var outputMonitor: TerminalOutputMonitor
     
     class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
         var parent: SwiftUITerminalView
@@ -42,9 +44,11 @@ struct SwiftUITerminalView: NSViewRepresentable {
         Coordinator(self)
     }
     
-    func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let terminal = LocalProcessTerminalView(frame: .zero)
+    func makeNSView(context: Context) -> MonitoringLocalProcessTerminalView {
+        let terminal = MonitoringLocalProcessTerminalView(frame: .zero)
         terminal.processDelegate = context.coordinator
+        terminal.setWorkflowDetector(workflowDetector)
+        terminal.setOutputMonitor(outputMonitor)
         
         // Set working directory
         FileManager.default.changeCurrentDirectoryPath("/Users/timapple/Documents/Github")
@@ -60,7 +64,7 @@ struct SwiftUITerminalView: NSViewRepresentable {
         return terminal
     }
     
-    func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
+    func updateNSView(_ nsView: MonitoringLocalProcessTerminalView, context: Context) {
         // Update if needed
     }
 }

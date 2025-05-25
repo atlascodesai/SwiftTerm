@@ -9,6 +9,12 @@ A native macOS/iOS terminal application built with SwiftUI and SwiftTerm, featur
 - Claude Code CLI integration
 - Starts in your GitHub directory (`~/Documents/Github`)
 - Proper keyboard shortcut handling
+- **NEW: Workflow Detection (MVP3)** - Automatically detects and captures commands suggested by Claude:
+  - Monitors terminal output in real-time
+  - Identifies build, test, lint, commit, and run commands
+  - Displays detected commands in a convenient UI
+  - Copy commands with one click
+  - Shows context around detected commands
 
 ## SwiftTerm Fork Improvements
 
@@ -41,7 +47,7 @@ This project uses a local fork of SwiftTerm with the following enhancements:
 ## Future Roadmap
 
 See `claude-code-mvp-roadmap.md` for planned features including:
-- MVP3: Workflow completion detection
+- ✅ MVP3: Workflow completion detection (Complete!)
 - MVP4: Multi-session & image support
 - MVP5: Chat history
 - MVP6: iOS deep links
