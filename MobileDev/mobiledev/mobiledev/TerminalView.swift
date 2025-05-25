@@ -18,15 +18,18 @@ struct TerminalView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(model.terminalOutput)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(.primary)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(Color(white: 0.9))
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(10)
                         .textSelection(.enabled)
                         .id("bottom")
                         .onChange(of: model.terminalOutput) { _, _ in
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                proxy.scrollTo("bottom", anchor: .bottom)
+                            // Debounce the scroll to avoid multiple updates per frame
+                            DispatchQueue.main.async {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    proxy.scrollTo("bottom", anchor: .bottom)
+                                }
                             }
                         }
                 }

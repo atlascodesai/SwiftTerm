@@ -3,15 +3,15 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 52;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2EA301922DE29DCF004875AC /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 2EA301912DE29DCF004875AC /* SwiftTerm */; };
 		49C75E442419C7E9008977FE /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C75E432419C7E9008977FE /* ViewController.swift */; };
 		49C75E462419C7E9008977FE /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C75E452419C7E9008977FE /* Document.swift */; };
 		49C75E482419C7E9008977FE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49C75E472419C7E9008977FE /* Assets.xcassets */; };
 		49C75E4B2419C7E9008977FE /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49C75E492419C7E9008977FE /* Main.storyboard */; };
-		49C75E522419C917008977FE /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 49C75E512419C917008977FE /* SwiftTerm */; };
 		49E855272427A3B400A3C3AB /* DebugViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E855262427A3B400A3C3AB /* DebugViewController.swift */; };
 		49F8A84024390F5200EF9C97 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F8A83F24390F5200EF9C97 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
@@ -36,7 +36,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				49C75E522419C917008977FE /* SwiftTerm in Frameworks */,
+				2EA301922DE29DCF004875AC /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -105,7 +105,7 @@
 			);
 			name = MacTerminal;
 			packageProductDependencies = (
-				49C75E512419C917008977FE /* SwiftTerm */,
+				2EA301912DE29DCF004875AC /* SwiftTerm */,
 			);
 			productName = MacTerminal;
 			productReference = 49C75E3F2419C7E9008977FE /* MacTerminal.app */;
@@ -117,8 +117,9 @@
 		49BD1A52224207B4005A2252 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
+				BuildIndependentTargetsInParallel = YES;
 				LastSwiftUpdateCheck = 1130;
-				LastUpgradeCheck = 1010;
+				LastUpgradeCheck = 1620;
 				ORGANIZATIONNAME = "Miguel de Icaza";
 				TargetAttributes = {
 					49C75E3E2419C7E9008977FE = {
@@ -136,6 +137,7 @@
 			);
 			mainGroup = 49BD1A51224207B4005A2252;
 			packageReferences = (
+				2EA3018C2DE29D97004875AC /* XCLocalSwiftPackageReference "../../SwiftTerm" */,
 			);
 			productRefGroup = 49BD1A5B224207B5005A2252 /* Products */;
 			projectDirPath = "";
@@ -195,6 +197,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -217,6 +220,7 @@
 				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
@@ -228,6 +232,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -257,6 +262,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -279,6 +285,7 @@
 				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
@@ -290,6 +297,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -318,13 +326,15 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = PJQC57N853;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 599WAZ6282;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "$(PRODUCT_NAME)/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.MacTerminal;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -340,13 +350,15 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = PJQC57N853;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 599WAZ6282;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "$(PRODUCT_NAME)/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.MacTerminal;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -377,8 +389,15 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		2EA3018C2DE29D97004875AC /* XCLocalSwiftPackageReference "../../SwiftTerm" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../SwiftTerm;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
-		49C75E512419C917008977FE /* SwiftTerm */ = {
+		2EA301912DE29DCF004875AC /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftTerm;
 		};

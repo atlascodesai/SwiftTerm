@@ -32,9 +32,16 @@ class TerminalModel: TerminalDelegate {
         #if os(macOS)
         localProcess = LocalProcess(delegate: self)
         
-        // Start zsh instead of default shell
+        // Start zsh normally
         let zshPath = "/bin/zsh"
         localProcess?.startProcess(executable: zshPath)
+        
+        // After a short delay, change to the desired directory
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            let cdCommand = "cd /Users/timapple/Documents/Github\n"
+            let data = Array(cdCommand.utf8)
+            self?.localProcess?.send(data: data[0..<data.count])
+        }
         #else
         // iOS doesn't support LocalProcess, show demo terminal
         terminal.feed(text: "Welcome to MobileDev Terminal (iOS)\r\n")
@@ -49,16 +56,14 @@ class TerminalModel: TerminalDelegate {
         print("➡️ INPUT: '\(command)'")
         
         #if os(macOS)
-        // Don't feed to terminal - let the shell echo it back
-        // Send to actual process with proper line ending
-        let data = Array((command + "\n").utf8)
-        localProcess?.send(data: data[0..<data.count])
+        // For Claude, we need to type the text and then send Enter
+        // First send the text
+        let textData = Array(command.utf8)
+        localProcess?.send(data: textData[0..<textData.count])
         
-        // Debug: Check terminal content after a delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            print("📋 TERMINAL CONTENT CHECK:")
-            self?.debugPrintTerminalContent()
-        }
+        // Then send Enter key (carriage return)
+        let enterKey: [UInt8] = [13] // \r (carriage return)
+        localProcess?.send(data: enterKey[0..<enterKey.count])
         #else
         // Show the command in terminal for iOS
         terminal.feed(text: command + "\r\n")
