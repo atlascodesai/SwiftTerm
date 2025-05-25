@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftTerm
+import Foundation
 
 @Observable
 class TerminalModel: TerminalDelegate {
@@ -17,11 +18,9 @@ class TerminalModel: TerminalDelegate {
     #endif
     
     init() {
-        print("🟢 TerminalModel: Initializing")
-        var options = TerminalOptions(cols: 80, rows: 24)
+        var options = TerminalOptions(cols: 120, rows: 40)
         options.convertEol = true
         self.terminal = Terminal(delegate: self, options: options)
-        print("🟢 TerminalModel: Terminal created with \(terminal.cols)x\(terminal.rows)")
         
         // Set terminal type for better compatibility
         setenv("TERM", "xterm-256color", 1)
@@ -30,22 +29,13 @@ class TerminalModel: TerminalDelegate {
     }
     
     private func startShell() {
-        print("🟢 TerminalModel: Starting shell")
         #if os(macOS)
-        print("🟢 TerminalModel: Running on macOS, creating LocalProcess")
-        // Use HeadlessTerminal approach for macOS
         localProcess = LocalProcess(delegate: self)
-        print("🟢 TerminalModel: LocalProcess created, starting process with zsh")
         
         // Start zsh instead of default shell
         let zshPath = "/bin/zsh"
         localProcess?.startProcess(executable: zshPath)
-        print("🟢 TerminalModel: startProcess called with zsh")
-        
-        // Add initial prompt to see something
-        terminal.feed(text: "Starting zsh shell...\r\n")
         #else
-        print("🟢 TerminalModel: Running on iOS, using demo terminal")
         // iOS doesn't support LocalProcess, show demo terminal
         terminal.feed(text: "Welcome to MobileDev Terminal (iOS)\r\n")
         terminal.feed(text: "Note: Shell execution is limited on iOS.\r\n")
@@ -53,18 +43,22 @@ class TerminalModel: TerminalDelegate {
         #endif
         
         updateDisplay()
-        print("🟢 TerminalModel: Initial display updated")
     }
     
     func sendCommand(_ command: String) {
-        print("🟡 TerminalModel: sendCommand called with: '\(command)'")
+        print("➡️ INPUT: '\(command)'")
         
         #if os(macOS)
         // Don't feed to terminal - let the shell echo it back
         // Send to actual process with proper line ending
         let data = Array((command + "\n").utf8)
-        print("🟡 TerminalModel: Sending \(data.count) bytes to localProcess")
         localProcess?.send(data: data[0..<data.count])
+        
+        // Debug: Check terminal content after a delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            print("📋 TERMINAL CONTENT CHECK:")
+            self?.debugPrintTerminalContent()
+        }
         #else
         // Show the command in terminal for iOS
         terminal.feed(text: command + "\r\n")
@@ -101,8 +95,6 @@ class TerminalModel: TerminalDelegate {
     // MARK: - TerminalDelegate
     
     func send(source: Terminal, data: ArraySlice<UInt8>) {
-        let str = String(bytes: data, encoding: .utf8) ?? "<non-utf8>"
-        print("🔵 TerminalDelegate.send called with: '\(str)' (\(data.count) bytes)")
         #if os(macOS)
         localProcess?.send(data: data)
         #endif
@@ -121,7 +113,6 @@ class TerminalModel: TerminalDelegate {
     }
     
     func updateDisplay(source: Terminal, notifyUpdateRange: Bool) {
-        print("🟣 TerminalDelegate.updateDisplay called")
         updateDisplay()
     }
     
@@ -156,14 +147,24 @@ class TerminalModel: TerminalDelegate {
             }
         }
         
-        print("🟣 updateDisplay: Found \(nonEmptyLines) non-empty lines")
-        
         // Update the output - don't trim too aggressively
         let newOutput = content.trimmingCharacters(in: .newlines)
         if newOutput != terminalOutput {
-            print("🟣 updateDisplay: Output changed, updating UI")
             terminalOutput = newOutput
         }
+    }
+    
+    func debugPrintTerminalContent() {
+        print("--- Terminal Buffer Content ---")
+        for row in 0..<terminal.rows {
+            if let line = terminal.getLine(row: row) {
+                let text = line.translateToString(trimRight: true)
+                if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                    print("Row \(row): '\(text)'")
+                }
+            }
+        }
+        print("--- End Terminal Buffer ---")
     }
 }
 
@@ -171,26 +172,17 @@ class TerminalModel: TerminalDelegate {
 // MARK: - LocalProcessDelegate for macOS
 extension TerminalModel: LocalProcessDelegate {
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
-        print("🔴 LocalProcessDelegate.processTerminated: exitCode=\(exitCode ?? -1)")
+        print("❌ PROCESS TERMINATED: exitCode=\(exitCode ?? -1)")
         DispatchQueue.main.async { [weak self] in
             self?.terminal.feed(text: "\r\nProcess terminated with exit code: \(exitCode ?? -1)\r\n")
         }
     }
     
     func dataReceived(slice: ArraySlice<UInt8>) {
-        let str = String(bytes: slice, encoding: .utf8) ?? "<non-utf8>"
-        
-        // Log raw bytes for debugging ANSI codes
-        if str.contains("\u{001B}") {
-            print("🟠 LocalProcessDelegate.dataReceived: Contains ANSI escape codes")
-            print("🟠 Raw string: \(str.debugDescription)")
-        } else {
-            print("🟢 LocalProcessDelegate.dataReceived: '\(str)' (\(slice.count) bytes)")
-        }
-        
+        // Just feed to terminal - it handles all the ANSI codes internally
         terminal.feed(buffer: slice)
         
-        // Force a display update after feeding data
+        // Update display to show the changes
         DispatchQueue.main.async { [weak self] in
             self?.updateDisplay()
         }
@@ -200,7 +192,6 @@ extension TerminalModel: LocalProcessDelegate {
         var size = winsize()
         size.ws_col = UInt16(terminal.cols)
         size.ws_row = UInt16(terminal.rows)
-        print("🔵 LocalProcessDelegate.getWindowSize: \(size.ws_col)x\(size.ws_row)")
         return size
     }
 }
