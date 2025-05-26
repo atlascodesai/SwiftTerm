@@ -15,15 +15,18 @@ struct SwiftUITerminalView: NSViewRepresentable {
     @Binding var currentDirectory: String
     let projectPath: String
     let onReady: ((LocalProcessTerminalView) -> Void)?
+    @ObservedObject var viewModel: TerminalViewModel
     
     init(terminalOutput: Binding<String> = .constant(""),
          currentDirectory: Binding<String> = .constant(""),
          projectPath: String = "/Users/timapple/Documents/Github",
-         onReady: ((LocalProcessTerminalView) -> Void)? = nil) {
+         onReady: ((LocalProcessTerminalView) -> Void)? = nil,
+         viewModel: TerminalViewModel) {
         self._terminalOutput = terminalOutput
         self._currentDirectory = currentDirectory
         self.projectPath = projectPath
         self.onReady = onReady
+        self.viewModel = viewModel
     }
     
     class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
@@ -31,6 +34,7 @@ struct SwiftUITerminalView: NSViewRepresentable {
         var processStarted = false
         weak var terminalView: LocalProcessTerminalView?
         private var outputTimer: Timer?
+        private var lastCapturedContent = ""
         
         init(_ parent: SwiftUITerminalView) {
             self.parent = parent
@@ -65,19 +69,38 @@ struct SwiftUITerminalView: NSViewRepresentable {
         
         // Start capturing output periodically
         func startOutputCapture() {
+            print("🔄 Starting output capture timer")
             outputTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
                 self.captureOutput()
             }
         }
         
         private func captureOutput() {
-            guard let terminal = terminalView?.terminal else { return }
+            guard let terminal = terminalView?.terminal else { 
+                print("⚠️ Cannot capture output: terminal is nil")
+                return 
+            }
             
             let data = terminal.getBufferAsData()
             if let content = String(data: data, encoding: .utf8) {
                 DispatchQueue.main.async {
                     self.parent.terminalOutput = content
+                    
+                    // Always update raw feed and process output
+                    let displayContent = content.isEmpty ? "No content captured..." : content
+                    self.parent.viewModel.rawTerminalFeed = displayContent
+                    print("📊 Raw feed updated with \(content.count) characters")
+                    
+                    // Get only new content since last capture for processing
+                    let newContent = String(content.dropFirst(self.lastCapturedContent.count))
+                    if !newContent.isEmpty {
+                        print("📥 New output captured: '\(newContent.prefix(100))...'")
+                        self.lastCapturedContent = content
+                        self.parent.viewModel.processCommandCompletion(newContent)
+                    }
                 }
+            } else {
+                print("⚠️ Failed to decode terminal buffer data")
             }
         }
     }

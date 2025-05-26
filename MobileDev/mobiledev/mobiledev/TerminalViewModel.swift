@@ -11,6 +11,7 @@ class TerminalViewModel: ObservableObject {
     @Published var currentCommand: String = ""
     @Published var claudeState: String = "Not running"
     @Published var lastAnalysis: ClaudeOutputAnalyzer.Analysis?
+    @Published var rawTerminalFeed: String = ""
     
     private weak var terminal: LocalProcessTerminalView?
     private var claudeDetected = false
@@ -31,9 +32,13 @@ class TerminalViewModel: ObservableObject {
     }
     
     func sendCommand(_ command: String) {
-        guard !command.isEmpty, let terminal = terminal else { return }
+        guard !command.isEmpty, let terminal = terminal else { 
+            print("❌ Cannot send command: terminal is nil or command is empty")
+            return 
+        }
         
         currentCommand = command
+        print("📤 Sending command: '\(command)'")
         
         // Make sure terminal has focus
         terminal.window?.makeFirstResponder(terminal)
@@ -43,8 +48,12 @@ class TerminalViewModel: ObservableObject {
             terminal.send(txt: String(char))
         }
         
-        // Send Enter key (carriage return)
+        // Send Enter key (carriage return) 
         terminal.send([13]) // CR
+        print("✅ Command sent with Enter key")
+        
+        // Clear the current command after sending
+        currentCommand = ""
         
         // Add to history (output will be updated when received)
         let entry = CommandEntry(
@@ -88,6 +97,9 @@ class TerminalViewModel: ObservableObject {
     // MARK: - Output Processing
     
     func processCommandCompletion(_ output: String) {
+        // Store raw output for debugging
+        rawTerminalFeed = output
+        
         // Update last command entry with output
         if !commandHistory.isEmpty {
             var lastEntry = commandHistory[commandHistory.count - 1]
@@ -105,8 +117,17 @@ class TerminalViewModel: ObservableObject {
             claudeDetected = true
         }
         
+        // Always analyze output to detect Claude patterns
+        let analysis = outputAnalyzer.analyze(output)
+        
+        // Check if Claude just started based on patterns
+        if !isClaudeRunning && (output.contains("Welcome to Claude Code") || output.contains("Human:") || analysis.type == .ready) {
+            isClaudeRunning = true
+            claudeState = "Ready"
+            print("🚀 Claude detected and marked as running")
+        }
+        
         if isClaudeRunning {
-            let analysis = outputAnalyzer.analyze(output)
             handleClaudeAnalysis(analysis)
         }
     }
@@ -195,6 +216,7 @@ struct ClaudeOutputAnalyzer {
         let error: String?
         let commandsExecuted: [String]
         let isComplete: Bool
+        let rawOutput: String
     }
     
     func analyze(_ output: String) -> Analysis {
@@ -207,6 +229,7 @@ struct ClaudeOutputAnalyzer {
         var commandsExecuted: [String] = []
         var outputType: OutputType = .working
         var isComplete = false
+        let rawOutput = output
         
         // Parse output for various patterns
         let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
@@ -281,7 +304,18 @@ struct ClaudeOutputAnalyzer {
             }
             
             // Ready state - Claude is waiting for input
-            if lineStr.contains("How can I help") || lineStr.contains("What would you like") {
+            if lineStr.contains("How can I help") || lineStr.contains("What would you like") || lineStr.contains("Human:") {
+                outputType = .ready
+                isComplete = true
+            }
+            
+            // Check for Claude-specific patterns
+            if lineStr.contains("Claude Code") || lineStr.contains("claude-code") || lineStr.contains("Human:") || lineStr.contains("Welcome to Claude Code") {
+                outputType = .ready
+            }
+            
+            // Check for Claude prompt patterns
+            if lineStr.contains("Human:") || lineStr.contains("> ") && lineStr.count < 10 {
                 outputType = .ready
                 isComplete = true
             }
@@ -303,7 +337,8 @@ struct ClaudeOutputAnalyzer {
             testsRun: testsRun,
             error: error,
             commandsExecuted: commandsExecuted,
-            isComplete: isComplete
+            isComplete: isComplete,
+            rawOutput: rawOutput
         )
     }
     

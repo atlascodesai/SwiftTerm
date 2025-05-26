@@ -24,14 +24,15 @@ struct ContentView: View {
                         projectPath: "/Users/timapple/Documents/Github",
                         onReady: { terminal in
                             viewModel.setTerminal(terminal)
-                        }
+                        },
+                        viewModel: viewModel
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.black)
                     .overlay(alignment: .topTrailing) {
                         // Analysis Panel Toggle
                         Button(action: { withAnimation { showAnalysisPanel.toggle() } }) {
-                            Image(systemName: showAnalysisPanel ? "sidebar.right.fill" : "sidebar.right")
+                            Image(systemName: showAnalysisPanel ? "sidebar.trailing.fill" : "sidebar.trailing")
                                 .foregroundColor(.white)
                                 .padding(8)
                                 .background(Color.black.opacity(0.7))
@@ -98,7 +99,7 @@ struct ContentView: View {
                 if showAnalysisPanel {
                     Divider()
                     
-                    AnalysisPanel(analysis: viewModel.lastAnalysis, claudeState: viewModel.claudeState)
+                    AnalysisPanel(analysis: viewModel.lastAnalysis, claudeState: viewModel.claudeState, rawFeed: viewModel.rawTerminalFeed)
                         .frame(width: 300)
                         .background(Color(NSColor.controlBackgroundColor))
                         .transition(.move(edge: .trailing))
@@ -117,6 +118,7 @@ struct ContentView: View {
 struct AnalysisPanel: View {
     let analysis: ClaudeOutputAnalyzer.Analysis?
     let claudeState: String
+    let rawFeed: String
     
     var body: some View {
         ScrollView {
@@ -256,6 +258,26 @@ struct AnalysisPanel: View {
                         .padding(.horizontal)
                     }
                 }
+                
+                // Raw Terminal Feed
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Raw Terminal Feed")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    
+                    ScrollView {
+                        Text(rawFeed.isEmpty ? "No output captured yet..." : rawFeed)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color.black.opacity(0.1))
+                            .cornerRadius(4)
+                    }
+                    .frame(maxHeight: 200)
+                }
+                .padding(.horizontal)
                 
                 Spacer()
             }
