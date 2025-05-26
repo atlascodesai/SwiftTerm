@@ -10,79 +10,255 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = TerminalViewModel()
     @State private var inputCommand = ""
+    @State private var showAnalysisPanel = false
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Terminal View
-                SwiftUITerminalView(
-                    terminalOutput: $viewModel.terminalOutput,
-                    currentDirectory: $viewModel.currentDirectory,
-                    projectPath: "/Users/timapple/Documents/Github",
-                    onReady: { terminal in
-                        viewModel.setTerminal(terminal)
+            HStack(spacing: 0) {
+                // Main Terminal Area
+                VStack(spacing: 0) {
+                    // Terminal View
+                    SwiftUITerminalView(
+                        terminalOutput: $viewModel.terminalOutput,
+                        currentDirectory: $viewModel.currentDirectory,
+                        projectPath: "/Users/timapple/Documents/Github",
+                        onReady: { terminal in
+                            viewModel.setTerminal(terminal)
+                        }
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
+                    .overlay(alignment: .topTrailing) {
+                        // Analysis Panel Toggle
+                        Button(action: { withAnimation { showAnalysisPanel.toggle() } }) {
+                            Image(systemName: showAnalysisPanel ? "sidebar.right.fill" : "sidebar.right")
+                                .foregroundColor(.white)
+                                .padding(8)
+                                .background(Color.black.opacity(0.7))
+                                .cornerRadius(6)
+                        }
+                        .padding()
                     }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black)
-                
-                Divider()
-                
-                // Command Input
-                HStack {
-                    TextField("Enter command...", text: $inputCommand)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit {
+                    
+                    Divider()
+                    
+                    // Command Input
+                    HStack {
+                        TextField("Enter command...", text: $inputCommand)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit {
+                                if !inputCommand.isEmpty {
+                                    viewModel.sendCommand(inputCommand)
+                                    inputCommand = ""
+                                }
+                            }
+                        
+                        Button("Send") {
                             if !inputCommand.isEmpty {
                                 viewModel.sendCommand(inputCommand)
                                 inputCommand = ""
                             }
                         }
-                    
-                    Button("Send") {
-                        if !inputCommand.isEmpty {
-                            viewModel.sendCommand(inputCommand)
-                            inputCommand = ""
-                        }
-                    }
-                    
-                    if viewModel.isClaudeRunning {
-                        Button("Exit Claude") {
-                            viewModel.exitClaude()
-                        }
-                        .foregroundColor(.red)
-                    } else {
-                        Button("Launch Claude") {
-                            viewModel.launchClaude()
-                        }
-                        .foregroundColor(.green)
-                    }
-                }
-                .padding()
-                
-                // Status Bar
-                HStack {
-                    Label(viewModel.currentDirectory.isEmpty ? "~" : viewModel.currentDirectory, 
-                          systemImage: "folder")
-                    
-                    Spacer()
-                    
-                    if viewModel.isClaudeRunning {
-                        Label("Claude Active", systemImage: "brain")
+                        
+                        if viewModel.isClaudeRunning {
+                            Button("Exit Claude") {
+                                viewModel.exitClaude()
+                            }
+                            .foregroundColor(.red)
+                        } else {
+                            Button("Launch Claude") {
+                                viewModel.launchClaude()
+                            }
                             .foregroundColor(.green)
-                    } else {
-                        Label("Shell", systemImage: "terminal")
+                        }
                     }
+                    .padding()
+                    
+                    // Status Bar
+                    HStack {
+                        Label(viewModel.currentDirectory.isEmpty ? "~" : viewModel.currentDirectory, 
+                              systemImage: "folder")
+                        
+                        Spacer()
+                        
+                        if viewModel.isClaudeRunning {
+                            Label("Claude: \(viewModel.claudeState)", systemImage: "brain")
+                                .foregroundColor(.green)
+                        } else {
+                            Label("Shell", systemImage: "terminal")
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 4)
+                    .background(Color.gray.opacity(0.1))
+                    .font(.caption)
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 4)
-                .background(Color.gray.opacity(0.1))
-                .font(.caption)
+                
+                // Analysis Panel
+                if showAnalysisPanel {
+                    Divider()
+                    
+                    AnalysisPanel(analysis: viewModel.lastAnalysis, claudeState: viewModel.claudeState)
+                        .frame(width: 300)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .transition(.move(edge: .trailing))
+                }
             }
             .navigationTitle("MobileDev Terminal")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+        }
+    }
+}
+
+// MARK: - Analysis Panel
+
+struct AnalysisPanel: View {
+    let analysis: ClaudeOutputAnalyzer.Analysis?
+    let claudeState: String
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Header
+                Text("Claude Analysis")
+                    .font(.headline)
+                    .padding(.horizontal)
+                    .padding(.top)
+                
+                // Current State
+                HStack {
+                    Label(claudeState, systemImage: "brain")
+                        .foregroundColor(.blue)
+                }
+                .padding(.horizontal)
+                
+                if let analysis = analysis {
+                    Divider()
+                    
+                    // File Operations
+                    if !analysis.filesRead.isEmpty || !analysis.filesCreated.isEmpty || !analysis.filesModified.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("File Operations")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            
+                            if !analysis.filesRead.isEmpty {
+                                Label("Read", systemImage: "doc.text")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                ForEach(analysis.filesRead, id: \.self) { file in
+                                    Text("• \(file)")
+                                        .font(.caption)
+                                        .padding(.leading)
+                                }
+                            }
+                            
+                            if !analysis.filesCreated.isEmpty {
+                                Label("Created", systemImage: "doc.badge.plus")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                                ForEach(analysis.filesCreated, id: \.self) { file in
+                                    Text("• \(file)")
+                                        .font(.caption)
+                                        .padding(.leading)
+                                }
+                            }
+                            
+                            if !analysis.filesModified.isEmpty {
+                                Label("Modified", systemImage: "doc.badge.gearshape")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                                ForEach(analysis.filesModified, id: \.self) { file in
+                                    Text("• \(file)")
+                                        .font(.caption)
+                                        .padding(.leading)
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Commands Executed
+                    if !analysis.commandsExecuted.isEmpty {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Commands Executed")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            
+                            ForEach(analysis.commandsExecuted, id: \.self) { command in
+                                HStack {
+                                    Image(systemName: "terminal")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Text(command)
+                                        .font(.system(.caption, design: .monospaced))
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Build/Test Status
+                    if analysis.type == .buildOutput {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Build Status")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            
+                            HStack {
+                                Image(systemName: analysis.buildSuccessful ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .foregroundColor(analysis.buildSuccessful ? .green : .red)
+                                Text(analysis.buildSuccessful ? "Build Succeeded" : "Build Failed")
+                                    .font(.caption)
+                            }
+                            
+                            if analysis.testsRun {
+                                HStack {
+                                    Image(systemName: "testtube.2")
+                                        .foregroundColor(.blue)
+                                    Text("Tests Executed")
+                                        .font(.caption)
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Errors
+                    if let error = analysis.error {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Error")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.red)
+                            
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Completion Status
+                    if analysis.isComplete {
+                        Divider()
+                        HStack {
+                            Image(systemName: "checkmark.circle")
+                                .foregroundColor(.green)
+                            Text("Operation Complete")
+                                .font(.caption)
+                        }
+                        .padding(.horizontal)
+                    }
+                }
+                
+                Spacer()
+            }
         }
     }
 }

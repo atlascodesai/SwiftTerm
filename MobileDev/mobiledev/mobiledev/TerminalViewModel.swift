@@ -9,6 +9,8 @@ class TerminalViewModel: ObservableObject {
     @Published var isClaudeRunning: Bool = false
     @Published var commandHistory: [CommandEntry] = []
     @Published var currentCommand: String = ""
+    @Published var claudeState: String = "Not running"
+    @Published var lastAnalysis: ClaudeOutputAnalyzer.Analysis?
     
     private weak var terminal: LocalProcessTerminalView?
     private var claudeDetected = false
@@ -70,6 +72,7 @@ class TerminalViewModel: ObservableObject {
     func launchClaude() {
         sendCommand("claude")
         isClaudeRunning = true
+        claudeState = "Starting..."
     }
     
     func exitClaude() {
@@ -79,6 +82,7 @@ class TerminalViewModel: ObservableObject {
             self.sendInterrupt()
         }
         isClaudeRunning = false
+        claudeState = "Not running"
     }
     
     // MARK: - Output Processing
@@ -108,19 +112,62 @@ class TerminalViewModel: ObservableObject {
     }
     
     private func handleClaudeAnalysis(_ analysis: ClaudeOutputAnalyzer.Analysis) {
-        // Handle different types of Claude responses
+        // Update last analysis
+        lastAnalysis = analysis
+        
+        // Update Claude state based on analysis
         switch analysis.type {
         case .codeEdit:
-            print("Claude edited files: \(analysis.filesModified)")
+            claudeState = "Editing files..."
+            print("📝 Claude edited files:")
+            for file in analysis.filesModified {
+                print("  - Modified: \(file)")
+            }
+            for file in analysis.filesCreated {
+                print("  - Created: \(file)")
+            }
+        case .thinking:
+            claudeState = "Thinking..."
+            print("🤔 Claude is thinking...")
         case .explanation:
-            print("Claude provided explanation")
+            claudeState = "Explaining..."
+            print("💡 Claude provided explanation")
         case .error:
-            print("Claude encountered error: \(analysis.error ?? "")")
+            claudeState = "Error occurred"
+            print("❌ Error: \(analysis.error ?? "Unknown error")")
         case .buildOutput:
-            print("Build status: \(analysis.buildSuccessful ? "Success" : "Failed")")
+            claudeState = analysis.buildSuccessful ? "Build succeeded" : "Build failed"
+            if analysis.buildSuccessful {
+                print("✅ Build succeeded!")
+            } else {
+                print("❌ Build failed")
+            }
+            if analysis.testsRun {
+                print("🧪 Tests were run")
+            }
+        case .commandExecution:
+            claudeState = "Executing commands..."
+            print("🔧 Commands executed:")
+            for cmd in analysis.commandsExecuted {
+                print("  $ \(cmd)")
+            }
         case .ready:
-            print("Claude is ready for next command")
+            claudeState = "Ready"
+            print("✨ Claude is ready for the next command")
+        case .working:
+            claudeState = "Working..."
+            print("⚙️ Claude is working...")
         }
+        
+        if analysis.isComplete {
+            claudeState = "Ready"
+            print("✓ Operation completed")
+        }
+        
+        // You can add additional handling here, such as:
+        // - Showing alerts for errors
+        // - Updating UI to show file changes
+        // - Triggering follow-up actions based on the analysis
     }
 }
 
@@ -129,80 +176,160 @@ class TerminalViewModel: ObservableObject {
 struct ClaudeOutputAnalyzer {
     enum OutputType {
         case codeEdit
+        case thinking
         case explanation
         case error
         case buildOutput
+        case commandExecution
         case ready
+        case working
     }
     
     struct Analysis {
         let type: OutputType
         let filesModified: [String]
+        let filesCreated: [String]
+        let filesRead: [String]
         let buildSuccessful: Bool
         let testsRun: Bool
         let error: String?
+        let commandsExecuted: [String]
+        let isComplete: Bool
     }
     
     func analyze(_ output: String) -> Analysis {
         var filesModified: [String] = []
+        var filesCreated: [String] = []
+        var filesRead: [String] = []
         var buildSuccessful = false
         var testsRun = false
         var error: String? = nil
-        var outputType: OutputType = .ready
+        var commandsExecuted: [String] = []
+        var outputType: OutputType = .working
+        var isComplete = false
         
         // Parse output for various patterns
-        let lines = output.split(separator: "\n")
-        for line in lines {
-            let lineStr = String(line)
+        let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
+        
+        for (index, line) in lines.enumerated() {
+            let lineStr = String(line).trimmingCharacters(in: .whitespaces)
             
-            // File modifications
-            if lineStr.contains("Editing:") || lineStr.contains("Modified:") {
-                if let filename = extractFilename(from: lineStr) {
+            // Skip empty lines
+            if lineStr.isEmpty { continue }
+            
+            // Claude thinking/working indicators
+            if lineStr.contains("Thinking...") || lineStr.contains("Working...") {
+                outputType = .thinking
+            }
+            
+            // File operations
+            if lineStr.contains("Reading ") && lineStr.contains(".") {
+                if let filename = extractFilePath(from: lineStr, after: "Reading") {
+                    filesRead.append(filename)
+                }
+            }
+            
+            if lineStr.contains("Creating ") && lineStr.contains(".") {
+                if let filename = extractFilePath(from: lineStr, after: "Creating") {
+                    filesCreated.append(filename)
+                    outputType = .codeEdit
+                }
+            }
+            
+            if lineStr.contains("Modifying ") || lineStr.contains("Updating ") || lineStr.contains("Editing ") {
+                if let filename = extractFilePath(from: lineStr, after: nil) {
                     filesModified.append(filename)
                     outputType = .codeEdit
                 }
             }
             
-            // Build status
-            if lineStr.contains("Build succeeded") || lineStr.contains("✅") {
+            // Command execution
+            if lineStr.hasPrefix("$") || lineStr.hasPrefix(">") {
+                let command = lineStr.dropFirst().trimmingCharacters(in: .whitespaces)
+                if !command.isEmpty {
+                    commandsExecuted.append(command)
+                    outputType = .commandExecution
+                }
+            }
+            
+            // Build/test status
+            if lineStr.contains("BUILD SUCCEEDED") || lineStr.contains("Build succeeded") || lineStr.contains("✅ Build") {
                 buildSuccessful = true
                 outputType = .buildOutput
-            } else if lineStr.contains("Build failed") || lineStr.contains("❌") {
+            } else if lineStr.contains("BUILD FAILED") || lineStr.contains("Build failed") || lineStr.contains("❌ Build") {
                 buildSuccessful = false
                 outputType = .buildOutput
             }
             
-            // Test status
-            if lineStr.contains("Tests passed") || lineStr.contains("test(s) passed") {
+            if lineStr.contains("Test Suite") && lineStr.contains("passed") {
+                testsRun = true
+            }
+            
+            if lineStr.contains("tests passed") || lineStr.contains("test(s) passed") {
                 testsRun = true
             }
             
             // Errors
-            if lineStr.contains("Error:") || lineStr.contains("error:") {
+            if lineStr.contains("error:") || lineStr.contains("Error:") || lineStr.contains("ERROR:") {
                 error = lineStr
                 outputType = .error
             }
             
-            // Ready state
-            if lineStr.contains("claude>") || lineStr.contains("Ready") {
+            // Check for completion indicators
+            if lineStr.contains("Done!") || lineStr.contains("Completed") || lineStr.contains("Finished") {
+                isComplete = true
+            }
+            
+            // Ready state - Claude is waiting for input
+            if lineStr.contains("How can I help") || lineStr.contains("What would you like") {
                 outputType = .ready
+                isComplete = true
+            }
+            
+            // Check if we're at a prompt (indicates command completion)
+            if index == lines.count - 1 {
+                if lineStr.hasSuffix("$") || lineStr.hasSuffix(">") || lineStr.hasSuffix("%") {
+                    isComplete = true
+                }
             }
         }
         
         return Analysis(
             type: outputType,
             filesModified: filesModified,
+            filesCreated: filesCreated,
+            filesRead: filesRead,
             buildSuccessful: buildSuccessful,
             testsRun: testsRun,
-            error: error
+            error: error,
+            commandsExecuted: commandsExecuted,
+            isComplete: isComplete
         )
     }
     
-    private func extractFilename(from line: String) -> String? {
-        // Simple extraction - can be improved
-        if let range = line.range(of: #"[\w/]+\.\w+"#, options: .regularExpression) {
-            return String(line[range])
+    private func extractFilePath(from line: String, after marker: String?) -> String? {
+        var searchLine = line
+        
+        // If marker provided, look for text after it
+        if let marker = marker {
+            if let range = line.range(of: marker) {
+                searchLine = String(line[range.upperBound...])
+            }
         }
+        
+        // Look for file paths - matches paths like /path/to/file.ext or just file.ext
+        let patterns = [
+            #"(?:/[\w\-./]+)+\.\w+"#,  // Full paths starting with /
+            #"(?:[\w\-./]+/)+[\w\-]+\.\w+"#,  // Relative paths with directories
+            #"[\w\-]+\.\w+"#  // Just filenames
+        ]
+        
+        for pattern in patterns {
+            if let range = searchLine.range(of: pattern, options: .regularExpression) {
+                return String(searchLine[range]).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        
         return nil
     }
 }
