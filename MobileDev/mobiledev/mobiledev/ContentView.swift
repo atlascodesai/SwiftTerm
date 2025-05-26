@@ -53,6 +53,7 @@ struct ContentView: View {
                                     inputCommand = ""
                                 }
                             }
+                            .submitLabel(.send)
                         
                         Button("Send") {
                             if !inputCommand.isEmpty {
@@ -99,7 +100,7 @@ struct ContentView: View {
                 if showAnalysisPanel {
                     Divider()
                     
-                    AnalysisPanel(analysis: viewModel.lastAnalysis, claudeState: viewModel.claudeState, rawFeed: viewModel.rawTerminalFeed)
+                    AnalysisPanel(analysis: viewModel.lastAnalysis, claudeState: viewModel.claudeState, rawFeed: viewModel.rawTerminalFeed, userCommands: viewModel.userCommands, commandResponses: viewModel.commandResponses)
                         .frame(width: 300)
                         .background(Color(NSColor.controlBackgroundColor))
                         .transition(.move(edge: .trailing))
@@ -119,6 +120,8 @@ struct AnalysisPanel: View {
     let analysis: ClaudeOutputAnalyzer.Analysis?
     let claudeState: String
     let rawFeed: String
+    let userCommands: [String]
+    let commandResponses: [TerminalViewModel.CommandEntry]
     
     var body: some View {
         ScrollView {
@@ -130,9 +133,17 @@ struct AnalysisPanel: View {
                     .padding(.top)
                 
                 // Current State
-                HStack {
-                    Label(claudeState, systemImage: "brain")
-                        .foregroundColor(.blue)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Label(claudeState, systemImage: "brain")
+                            .foregroundColor(claudeState.contains("Generating") ? .orange : .blue)
+                    }
+                    
+                    if let analysis = analysis {
+                        Text("Type: \(String(describing: analysis.type))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .padding(.horizontal)
                 
@@ -182,22 +193,36 @@ struct AnalysisPanel: View {
                         .padding(.horizontal)
                     }
                     
-                    // Commands Executed
-                    if !analysis.commandsExecuted.isEmpty {
+                    // Command/Response History
+                    if !commandResponses.isEmpty {
                         Divider()
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Commands Executed")
+                            Text("Command History")
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                             
-                            ForEach(analysis.commandsExecuted, id: \.self) { command in
-                                HStack {
-                                    Image(systemName: "terminal")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Text(command)
-                                        .font(.system(.caption, design: .monospaced))
+                            ForEach(commandResponses) { entry in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    // Command
+                                    HStack {
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundColor(.blue)
+                                        Text(entry.command)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundColor(.blue)
+                                    }
+                                    
+                                    // Response (truncated)
+                                    if !entry.rawResponse.isEmpty {
+                                        Text(String(entry.rawResponse.prefix(200)))
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(3)
+                                            .padding(.leading, 16)
+                                    }
                                 }
+                                .padding(.vertical, 2)
                             }
                         }
                         .padding(.horizontal)

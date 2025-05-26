@@ -12,16 +12,19 @@ class TerminalViewModel: ObservableObject {
     @Published var claudeState: String = "Not running"
     @Published var lastAnalysis: ClaudeOutputAnalyzer.Analysis?
     @Published var rawTerminalFeed: String = ""
+    @Published var userCommands: [String] = []
+    @Published var commandResponses: [CommandEntry] = []
     
     private weak var terminal: LocalProcessTerminalView?
     private var claudeDetected = false
     private var outputAnalyzer = ClaudeOutputAnalyzer()
+    private var wasGenerating = false
     
-    struct CommandEntry {
+    struct CommandEntry: Identifiable {
         let id = UUID()
         let timestamp: Date
         let command: String
-        let output: String
+        var rawResponse: String = ""
         let isClaudeCommand: Bool
     }
     
@@ -37,8 +40,69 @@ class TerminalViewModel: ObservableObject {
             return 
         }
         
-        currentCommand = command
         print("📤 Sending command: '\(command)'")
+        
+        // Focus the terminal first
+        terminal.window?.makeFirstResponder(terminal)
+        
+        // Small delay to ensure focus
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            // Try simulating keyboard events
+            if let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: terminal.window?.windowNumber ?? 0,
+                context: nil,
+                characters: command,
+                charactersIgnoringModifiers: command,
+                isARepeat: false,
+                keyCode: 0
+            ) {
+                terminal.keyDown(with: event)
+            }
+            
+            // Then send Enter key event
+            if let enterEvent = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: terminal.window?.windowNumber ?? 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: 36 // Enter key code
+            ) {
+                terminal.keyDown(with: enterEvent)
+            }
+        }
+        
+        // Track command
+        let entry = CommandEntry(
+            timestamp: Date(),
+            command: command,
+            rawResponse: "",
+            isClaudeCommand: isClaudeRunning
+        )
+        commandHistory.append(entry)
+        commandResponses.append(entry)
+        userCommands.append(command)
+        
+        print("✅ Command sent via keyboard events")
+    }
+    
+    // Method 1: CR (13)
+    func sendCommandMethod1(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { 
+            print("❌ Cannot send command: terminal is nil or command is empty")
+            return 
+        }
+        
+        currentCommand = command
+        print("📤 Method 1 (CR): Sending command: '\(command)'")
         
         // Make sure terminal has focus
         terminal.window?.makeFirstResponder(terminal)
@@ -50,7 +114,7 @@ class TerminalViewModel: ObservableObject {
         
         // Send Enter key (carriage return) 
         terminal.send([13]) // CR
-        print("✅ Command sent with Enter key")
+        print("✅ Command sent with CR (13)")
         
         // Clear the current command after sending
         currentCommand = ""
@@ -59,10 +123,138 @@ class TerminalViewModel: ObservableObject {
         let entry = CommandEntry(
             timestamp: Date(),
             command: command,
-            output: "", // Will be updated
+            rawResponse: "",
             isClaudeCommand: isClaudeRunning
         )
         commandHistory.append(entry)
+        commandResponses.append(entry)
+        
+        // Track all commands sent through the UI
+        userCommands.append(command)
+        print("📌 Command sent: '\(command)' (Claude running: \(isClaudeRunning))")
+    }
+    
+    // Method 2: LF (10)
+    func sendCommandMethod2(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { return }
+        
+        print("📤 Method 2 (LF): Sending command: '\(command)'")
+        terminal.window?.makeFirstResponder(terminal)
+        
+        for char in command {
+            terminal.send(txt: String(char))
+        }
+        
+        terminal.send([10]) // LF
+        print("✅ Command sent with LF (10)")
+    }
+    
+    // Method 3: CRLF (13, 10)
+    func sendCommandMethod3(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { return }
+        
+        print("📤 Method 3 (CRLF): Sending command: '\(command)'")
+        terminal.window?.makeFirstResponder(terminal)
+        
+        for char in command {
+            terminal.send(txt: String(char))
+        }
+        
+        terminal.send([13, 10]) // CRLF
+        print("✅ Command sent with CRLF (13, 10)")
+    }
+    
+    // Method 4: Using send(txt:) with \n
+    func sendCommandMethod4(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { return }
+        
+        print("📤 Method 4 (txt \\n): Sending command: '\(command)'")
+        terminal.window?.makeFirstResponder(terminal)
+        
+        // Send command with newline
+        terminal.send(txt: command + "\n")
+        print("✅ Command sent with txt + \\n")
+    }
+    
+    // Method 5: Using send(txt:) with \r
+    func sendCommandMethod5(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { return }
+        
+        print("📤 Method 5 (txt \\r): Sending command: '\(command)'")
+        terminal.window?.makeFirstResponder(terminal)
+        
+        // Send command with return
+        terminal.send(txt: command + "\r")
+        print("✅ Command sent with txt + \\r")
+    }
+    
+    // Method 6: Ctrl+J (10) - Alternative line feed
+    func sendCommandMethod6(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { return }
+        
+        print("📤 Method 6 (Ctrl+J): Sending command: '\(command)'")
+        terminal.window?.makeFirstResponder(terminal)
+        
+        for char in command {
+            terminal.send(txt: String(char))
+        }
+        
+        terminal.send([10]) // Ctrl+J
+        print("✅ Command sent with Ctrl+J")
+    }
+    
+    // Method 7: Escape sequence for Enter
+    func sendCommandMethod7(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { return }
+        
+        print("📤 Method 7 (ESC seq): Sending command: '\(command)'")
+        terminal.window?.makeFirstResponder(terminal)
+        
+        for char in command {
+            terminal.send(txt: String(char))
+        }
+        
+        // Try ESC + Enter sequence
+        terminal.send([27, 13]) // ESC + CR
+        print("✅ Command sent with ESC + CR")
+    }
+    
+    // Method 8: Using insertText
+    func sendCommandMethod8(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { return }
+        
+        print("📤 Method 8 (insertText): Sending command: '\(command)'")
+        terminal.window?.makeFirstResponder(terminal)
+        
+        // Use insertText which might handle line endings differently
+        terminal.insertText(command + "\n")
+        print("✅ Command sent with insertText + \\n")
+    }
+    
+    // Method 9: Send as byte array
+    func sendCommandMethod9(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { return }
+        
+        print("📤 Method 9 (byte array): Sending command: '\(command)'")
+        terminal.window?.makeFirstResponder(terminal)
+        
+        // Convert to byte array and send with newline
+        let fullCommand = command + "\n"
+        let bytes = Array(fullCommand.utf8)
+        terminal.send(bytes)
+        print("✅ Command sent as byte array")
+    }
+    
+    // Method 10: Direct terminal feed
+    func sendCommandMethod10(_ command: String) {
+        guard !command.isEmpty, let terminal = terminal else { return }
+        
+        print("📤 Method 10 (feed): Sending command: '\(command)'")
+        terminal.window?.makeFirstResponder(terminal)
+        
+        // Try using feed which might process input differently
+        terminal.feed(text: command + "\n")
+        print("✅ Command sent with feed")
     }
     
     func sendInterrupt() {
@@ -82,6 +274,9 @@ class TerminalViewModel: ObservableObject {
         sendCommand("claude")
         isClaudeRunning = true
         claudeState = "Starting..."
+        userCommands.removeAll() // Clear commands when starting new session
+        commandResponses.removeAll() // Clear command history
+        print("🚀 Claude launched, commands will be tracked")
     }
     
     func exitClaude() {
@@ -104,43 +299,55 @@ class TerminalViewModel: ObservableObject {
     }
     
     func processCommandCompletion(_ output: String) {
-        // Update last command entry with output
-        if !commandHistory.isEmpty {
-            var lastEntry = commandHistory[commandHistory.count - 1]
-            lastEntry = CommandEntry(
-                timestamp: lastEntry.timestamp,
-                command: lastEntry.command,
-                output: output,
-                isClaudeCommand: lastEntry.isClaudeCommand
-            )
-            commandHistory[commandHistory.count - 1] = lastEntry
+        // Update last command response with new output
+        if !commandResponses.isEmpty {
+            commandResponses[commandResponses.count - 1].rawResponse += output
         }
+        
+        // Debug: Show what new content we received
+        print("📨 New content (\(output.count) chars): '\(output.prefix(200))'")
         
         // Analyze output
         if currentCommand == "which claude" && output.contains("/claude") {
             claudeDetected = true
         }
         
-        // Analyze the visible terminal content for better state detection
-        let visibleContent = getVisibleTerminalContent()
-        let analysis = outputAnalyzer.analyze(visibleContent)
+        // Check for generation pattern in the NEW output
+        if output.contains("tokens") && output.contains("esc to interrupt") {
+            print("⚡ Found generation pattern in NEW output!")
+            claudeState = "Generating response..."
+            wasGenerating = true
+        }
+        
+        // Analyze the NEW output directly
+        let analysis = outputAnalyzer.analyze(output)
         
         // Check if Claude just started based on patterns in full terminal content
-        if !isClaudeRunning && (rawTerminalFeed.contains("Welcome to Claude Code") || rawTerminalFeed.contains("Human:")) {
+        if !isClaudeRunning && (rawTerminalFeed.contains("Welcome to Claude Code") || rawTerminalFeed.contains("Human:") || rawTerminalFeed.contains("Hi! How can I help")) {
             isClaudeRunning = true
             claudeState = "Ready"
             print("🚀 Claude detected and marked as running")
         }
         
         if isClaudeRunning {
+            // Track generation state transitions
+            let isCurrentlyGenerating = analysis.type == .working
+            
+            // If we were generating and now we're not, Claude has finished
+            if wasGenerating && !isCurrentlyGenerating && analysis.type == .ready {
+                print("✅ Claude finished generating response")
+                claudeState = "Ready for input"
+            }
+            
+            wasGenerating = isCurrentlyGenerating
             handleClaudeAnalysis(analysis)
         }
         
-        // Debug: Show last few lines of terminal
-        let lines = rawTerminalFeed.split(separator: "\n")
-        if lines.count > 0 {
-            let lastLine = lines.last ?? ""
-            print("📍 Last line: '\(lastLine)'")
+        // Check if generation just ended (we see a prompt after generating)
+        if wasGenerating && output.contains("> ") && !output.contains("tokens") {
+            print("✅ Generation completed, ready for input")
+            claudeState = "Ready for input"
+            wasGenerating = false
         }
     }
     
@@ -188,8 +395,8 @@ class TerminalViewModel: ObservableObject {
             claudeState = "Ready for input"
             print("✨ Claude is ready for the next command")
         case .working:
-            claudeState = "Processing..."
-            print("⚙️ Claude is working...")
+            claudeState = "Generating response..."
+            print("⚙️ Claude is generating...")
         }
         
         if analysis.isComplete {
@@ -232,6 +439,12 @@ struct ClaudeOutputAnalyzer {
     }
     
     func analyze(_ output: String) -> Analysis {
+        // Debug: Show what we're analyzing
+        print("🔍 Analyzing \(output.count) chars of output")
+        if output.count < 500 {
+            print("   Content: '\(output)'")
+        }
+        
         var filesModified: [String] = []
         var filesCreated: [String] = []
         var filesRead: [String] = []
@@ -257,6 +470,13 @@ struct ClaudeOutputAnalyzer {
                 outputType = .thinking
             }
             
+            // Claude generation indicator - look for "tokens" and "esc to interrupt"
+            // Pattern: "✶ [Word]... (2s · ↑ 0 tokens · esc to interrupt)"
+            if lineStr.contains("tokens") && lineStr.contains("esc to interrupt") {
+                outputType = .working
+                print("⚡ Claude is generating: '\(lineStr)'")
+            }
+            
             // File operations
             if lineStr.contains("Reading ") && lineStr.contains(".") {
                 if let filename = extractFilePath(from: lineStr, after: "Reading") {
@@ -278,12 +498,13 @@ struct ClaudeOutputAnalyzer {
                 }
             }
             
-            // Command execution
-            if lineStr.hasPrefix("$") || lineStr.hasPrefix(">") {
+            // Command execution - look for prompts followed by commands
+            if lineStr.hasPrefix(">") && lineStr.count > 2 {
                 let command = lineStr.dropFirst().trimmingCharacters(in: .whitespaces)
                 if !command.isEmpty {
                     commandsExecuted.append(command)
                     outputType = .commandExecution
+                    print("📝 Detected command: '\(command)'")
                 }
             }
             
@@ -350,6 +571,13 @@ struct ClaudeOutputAnalyzer {
                 outputType = .ready
                 isComplete = true
                 print("🎯 Detected Claude prompt: '\(trimmedLast)'")
+            }
+            
+            // Also check if the last line shows generation status
+            if trimmedLast.contains("tokens") && trimmedLast.contains("esc to interrupt") {
+                outputType = .working
+                isComplete = false
+                print("⚡ Claude is actively generating - last line: '\(trimmedLast)'")
             }
         }
         
