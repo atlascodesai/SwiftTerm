@@ -96,10 +96,14 @@ class TerminalViewModel: ObservableObject {
     
     // MARK: - Output Processing
     
+    private func getVisibleTerminalContent() -> String {
+        // Get last 100 lines of terminal for analysis (avoids analyzing old content)
+        let lines = rawTerminalFeed.split(separator: "\n", omittingEmptySubsequences: false)
+        let visibleLines = lines.suffix(100)
+        return visibleLines.joined(separator: "\n")
+    }
+    
     func processCommandCompletion(_ output: String) {
-        // Store raw output for debugging
-        rawTerminalFeed = output
-        
         // Update last command entry with output
         if !commandHistory.isEmpty {
             var lastEntry = commandHistory[commandHistory.count - 1]
@@ -117,11 +121,12 @@ class TerminalViewModel: ObservableObject {
             claudeDetected = true
         }
         
-        // Always analyze output to detect Claude patterns
-        let analysis = outputAnalyzer.analyze(output)
+        // Analyze the visible terminal content for better state detection
+        let visibleContent = getVisibleTerminalContent()
+        let analysis = outputAnalyzer.analyze(visibleContent)
         
-        // Check if Claude just started based on patterns
-        if !isClaudeRunning && (output.contains("Welcome to Claude Code") || output.contains("Human:") || analysis.type == .ready) {
+        // Check if Claude just started based on patterns in full terminal content
+        if !isClaudeRunning && (rawTerminalFeed.contains("Welcome to Claude Code") || rawTerminalFeed.contains("Human:")) {
             isClaudeRunning = true
             claudeState = "Ready"
             print("🚀 Claude detected and marked as running")
@@ -129,6 +134,13 @@ class TerminalViewModel: ObservableObject {
         
         if isClaudeRunning {
             handleClaudeAnalysis(analysis)
+        }
+        
+        // Debug: Show last few lines of terminal
+        let lines = rawTerminalFeed.split(separator: "\n")
+        if lines.count > 0 {
+            let lastLine = lines.last ?? ""
+            print("📍 Last line: '\(lastLine)'")
         }
     }
     
@@ -173,10 +185,10 @@ class TerminalViewModel: ObservableObject {
                 print("  $ \(cmd)")
             }
         case .ready:
-            claudeState = "Ready"
+            claudeState = "Ready for input"
             print("✨ Claude is ready for the next command")
         case .working:
-            claudeState = "Working..."
+            claudeState = "Processing..."
             print("⚙️ Claude is working...")
         }
         
@@ -325,6 +337,19 @@ struct ClaudeOutputAnalyzer {
                 if lineStr.hasSuffix("$") || lineStr.hasSuffix(">") || lineStr.hasSuffix("%") {
                     isComplete = true
                 }
+            }
+        }
+        
+        // Special handling for Claude prompt detection - check last non-empty line
+        let nonEmptyLines = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        if let lastNonEmptyLine = nonEmptyLines.last {
+            let trimmedLast = lastNonEmptyLine.trimmingCharacters(in: .whitespaces)
+            
+            // Claude's input prompt is typically just "> "
+            if trimmedLast == ">" || trimmedLast.hasPrefix("> ") {
+                outputType = .ready
+                isComplete = true
+                print("🎯 Detected Claude prompt: '\(trimmedLast)'")
             }
         }
         
