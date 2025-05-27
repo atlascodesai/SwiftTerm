@@ -22,6 +22,7 @@ class TerminalViewModel: ObservableObject {
     private var lastPromptPosition = 0
     private var waitingForResponse = false
     private var capturedContent = ""  // Accumulate content separately
+    private var lastTerminalContent = ""  // Track terminal state
     
     struct CommandEntry: Identifiable {
         let id = UUID()
@@ -54,7 +55,7 @@ class TerminalViewModel: ObservableObject {
         
         print("📤 Sending command: '\(command)'")
         print("🔍 Terminal: \(terminal)")
-        print("🔍 Terminal window: \(terminal.window)")
+        print("🔍 Terminal window: \(String(describing: terminal.window))")
         print("🔍 Terminal accepts first responder: \(terminal.acceptsFirstResponder)")
         
         // Focus the terminal first
@@ -302,6 +303,85 @@ class TerminalViewModel: ObservableObject {
         return visibleLines.joined(separator: "\n")
     }
     
+    func setGenerating(_ isGenerating: Bool) {
+        wasGenerating = isGenerating
+        claudeState = isGenerating ? "Generating response..." : "Ready for input"
+        
+        if !commandResponses.isEmpty {
+            let lastIndex = commandResponses.count - 1
+            commandResponses[lastIndex].claudeGenerating = isGenerating
+        }
+    }
+    
+    func extractPendingResponses() {
+        // Extract responses for any incomplete commands
+        for (index, entry) in commandResponses.enumerated() {
+            if !entry.isComplete && entry.rawResponse.isEmpty {
+                print("📝 Extracting response for pending command: '\(entry.command)'")
+                extractResponseFromRawFeed(for: index)
+            }
+        }
+    }
+    
+    private func extractResponseFromRawFeed(for index: Int) {
+        guard index < commandResponses.count else { return }
+        
+        let command = commandResponses[index].command
+        let content = rawTerminalFeed
+        
+        // Find the command in the raw feed
+        if let commandRange = content.range(of: "> \(command)\n") ?? content.range(of: "> \(command)") {
+            let afterCommand = String(content[commandRange.upperBound...])
+            
+            // For Claude command, extract welcome box
+            if command == "claude" && afterCommand.contains("Welcome to Claude Code!") {
+                if let boxStart = afterCommand.range(of: "╭"),
+                   let boxEnd = afterCommand.range(of: "╰") {
+                    let endIdx = afterCommand.index(boxEnd.upperBound, offsetBy: min(50, afterCommand.distance(from: boxEnd.upperBound, to: afterCommand.endIndex)))
+                    commandResponses[index].rawResponse = String(afterCommand[boxStart.lowerBound..<endIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    commandResponses[index].isComplete = true
+                    print("✅ Extracted Claude welcome")
+                    return
+                }
+            }
+            
+            // For other commands, extract everything until next prompt
+            var response = ""
+            let lines = afterCommand.split(separator: "\n", omittingEmptySubsequences: false)
+            
+            for line in lines {
+                let lineStr = String(line)
+                
+                // Stop at next prompt
+                if lineStr.contains("╭─") && lineStr.contains("─╮") && lineStr.contains(">") {
+                    break
+                }
+                if lineStr.contains("│ >") && lineStr.contains("│") {
+                    break
+                }
+                
+                // Skip empty lines at start
+                if response.isEmpty && lineStr.trimmingCharacters(in: .whitespaces).isEmpty {
+                    continue
+                }
+                
+                // Add line
+                if !response.isEmpty {
+                    response += "\n"
+                }
+                response += lineStr
+            }
+            
+            // Clean and save
+            response = response.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !response.isEmpty {
+                commandResponses[index].rawResponse = response
+                commandResponses[index].isComplete = true
+                print("✅ Extracted response: '\(response.prefix(50))...'")
+            }
+        }
+    }
+    
     private func cleanupLastResponse() {
         guard !commandResponses.isEmpty else { return }
         let lastIndex = commandResponses.count - 1
@@ -347,67 +427,116 @@ class TerminalViewModel: ObservableObject {
         // Keeping it empty for compatibility
     }
     
+    private func extractResponseFromTerminal(for index: Int) {
+        guard index < commandResponses.count else { return }
+        
+        let command = commandResponses[index].command
+        let terminal = rawTerminalFeed
+        
+        print("🔍 Extracting response for '\(command)' from terminal (\(terminal.count) chars)")
+        
+        // Debug: Show what we're searching for
+        if terminal.contains(command) {
+            print("   ✓ Found command '\(command)' in terminal")
+        } else {
+            print("   ✗ Command '\(command)' not found in terminal")
+            return
+        }
+        
+        // Try different patterns to find the command
+        var commandRange: Range<String.Index>? = nil
+        
+        // Pattern 1: "> command\n"
+        commandRange = terminal.range(of: "> \(command)\n")
+        if commandRange == nil {
+            // Pattern 2: "% command\n" (for zsh)
+            commandRange = terminal.range(of: "% \(command)\n")
+        }
+        if commandRange == nil {
+            // Pattern 3: just "command\n"
+            commandRange = terminal.range(of: "\(command)\n")
+        }
+        
+        if let commandRange = commandRange {
+            print("   ✓ Found command pattern at position \(terminal.distance(from: terminal.startIndex, to: commandRange.lowerBound))")
+            
+            // Get everything after the command
+            let afterCommand = String(terminal[commandRange.upperBound...])
+            print("   After command: \(afterCommand.prefix(100))...")
+            
+            // For claude command, look for the welcome box
+            if command == "claude" {
+                if let boxStart = afterCommand.range(of: "╭"),
+                   let boxEnd = afterCommand.range(of: "╰") {
+                    let endIndex = afterCommand.index(boxEnd.upperBound, offsetBy: min(afterCommand.distance(from: boxEnd.upperBound, to: afterCommand.endIndex), 50))
+                    let welcomeBox = String(afterCommand[boxStart.lowerBound..<endIndex])
+                    commandResponses[index].rawResponse = welcomeBox.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("✅ Extracted Claude welcome box")
+                    return
+                }
+            }
+            
+            // For all commands, capture everything between command and next prompt
+            let lines = afterCommand.split(separator: "\n", omittingEmptySubsequences: false)
+            var responseLines: [String] = []
+            var skipEmptyLinesAtStart = true
+            
+            for line in lines {
+                let lineStr = String(line)
+                
+                // Stop at next prompt (command input area)
+                if lineStr.contains("╭─") && lineStr.contains("─╮") && lineStr.contains(">") {
+                    print("   Found prompt box, stopping")
+                    break
+                }
+                if lineStr.contains("│ >") && lineStr.contains("│") {
+                    print("   Found prompt line, stopping")
+                    break
+                }
+                
+                // Skip empty lines only at the beginning
+                if skipEmptyLinesAtStart && lineStr.trimmingCharacters(in: .whitespaces).isEmpty {
+                    continue
+                }
+                
+                // Once we have content, capture everything
+                skipEmptyLinesAtStart = false
+                responseLines.append(lineStr)
+            }
+            
+            if !responseLines.isEmpty {
+                let response = responseLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                commandResponses[index].rawResponse = response
+                print("✅ Extracted response: '\(response.prefix(50))...'")
+            } else {
+                print("   ⚠️ No response lines found")
+            }
+        } else {
+            print("   ✗ Could not find command pattern in terminal")
+        }
+    }
+    
     func processCommandCompletion(_ output: String) {
-        // Debug: Show what new content we received
-        print("📨 New content (\(output.count) chars): '\(output.prefix(200))'")
+        // Debug: Show what new content we received (only if not empty)
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            print("📨 Processing new content (\(output.count) chars)")
+        }
         
         // Accumulate all content we see
         capturedContent += output
         
-        // If we're waiting for a response, capture it
+        // If waiting for response and see Claude welcome, extract it
         if waitingForResponse && !commandResponses.isEmpty {
             let lastIndex = commandResponses.count - 1
+            let command = commandResponses[lastIndex].command
             
-            // Look for meaningful content in the new output
-            let cleanedOutput = output
-                .replacingOccurrences(of: "\r", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            // Skip empty updates
-            if !cleanedOutput.isEmpty && !cleanedOutput.allSatisfy({ $0 == "\n" }) {
-                // Special handling for the welcome box
-                if commandResponses[lastIndex].command == "claude" && 
-                   output.contains("Welcome to Claude Code!") {
-                    // Capture the entire welcome box
-                    commandResponses[lastIndex].rawResponse = output
-                    print("📝 Captured Claude welcome box")
-                } else {
-                    // Append non-empty content to the response
-                    if !commandResponses[lastIndex].rawResponse.isEmpty {
-                        commandResponses[lastIndex].rawResponse += "\n"
-                    }
-                    commandResponses[lastIndex].rawResponse += cleanedOutput
-                    print("📝 Appended to response: '\(cleanedOutput.prefix(50))...'")
+            if command == "claude" && output.contains("Welcome to Claude Code!") {
+                print("📝 Claude welcome detected")
+                // Extract after a short delay to ensure full content
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    self.extractPendingResponses()
                 }
-            }
-            
-            // Check if this is Claude generating
-            if output.contains("tokens") && output.contains("esc to interrupt") ||
-               output.contains("⏺") || output.contains("●") {
-                commandResponses[lastIndex].claudeGenerating = true
-                print("⚡ Command \(lastIndex) is generating")
-            }
-            
-            // Check if command is complete (new prompt appears)
-            if output.contains("│ >") && output.contains("│") && !output.contains("tokens") {
-                commandResponses[lastIndex].isComplete = true
-                commandResponses[lastIndex].claudeGenerating = false
-                waitingForResponse = false
-                print("✅ Command \(lastIndex) completed")
-                
-                // Clean up the final response
-                cleanupLastResponse()
-            }
-            
-            // Also check for simple prompt
-            if output.contains("> ") && output.contains("for shortcuts") {
-                commandResponses[lastIndex].isComplete = true
-                commandResponses[lastIndex].claudeGenerating = false
-                waitingForResponse = false
-                print("✅ Command \(lastIndex) completed (simple prompt)")
-                
-                // Clean up the final response
-                cleanupLastResponse()
             }
         }
         
@@ -416,20 +545,13 @@ class TerminalViewModel: ObservableObject {
             claudeDetected = true
         }
         
-        // Check for generation pattern in the NEW output
-        let generationPatterns = [
-            "tokens",
-            "Type: working",
-            "●", "◐", "◓", "◑",  // Spinning dots
-            "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"  // Braille spinners
-        ]
-        
-        let hasGenerationPattern = generationPatterns.contains { output.contains($0) }
-        
-        if hasGenerationPattern || (output.contains("tokens") && output.contains("esc to interrupt")) {
-            print("⚡ Found generation pattern in NEW output!")
-            claudeState = "Generating response..."
-            wasGenerating = true
+        // Check for generation pattern in the terminal
+        if rawTerminalFeed.contains("esc to interrupt") {
+            if !wasGenerating {
+                print("⚡ Generation started")
+                claudeState = "Generating response..."
+                wasGenerating = true
+            }
         }
         
         // Analyze the NEW output directly
@@ -564,10 +686,10 @@ struct ClaudeOutputAnalyzer {
     }
     
     func analyze(_ output: String) -> Analysis {
-        // Debug: Show what we're analyzing
-        print("🔍 Analyzing \(output.count) chars of output")
-        if output.count < 500 {
-            print("   Content: '\(output)'")
+        // Debug: Show what we're analyzing (only if significant)
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty && trimmed.count > 5 {
+            print("🔍 Analyzing \(output.count) chars of output")
         }
         
         var filesModified: [String] = []
@@ -595,17 +717,10 @@ struct ClaudeOutputAnalyzer {
                 outputType = .thinking
             }
             
-            // Claude generation indicator - look for various patterns
-            // Pattern 1: "✶ [Word]... (2s · ↑ 0 tokens · esc to interrupt)"
-            // Pattern 2: "Type: working" or similar status indicators
-            // Pattern 3: Spinning indicators or progress markers
-            if (lineStr.contains("tokens") && lineStr.contains("esc to interrupt")) ||
-               lineStr.contains("Type: working") ||
-               lineStr.contains("●") || lineStr.contains("◐") || lineStr.contains("◓") || lineStr.contains("◑") ||
-               lineStr.contains("⣾") || lineStr.contains("⣽") || lineStr.contains("⣻") || lineStr.contains("⢿") ||
-               lineStr.contains("⡿") || lineStr.contains("⣟") || lineStr.contains("⣯") || lineStr.contains("⣷") {
+            // Claude generation indicator - look for specific token pattern
+            if lineStr.contains("tokens") && lineStr.contains("esc to interrupt") {
                 outputType = .working
-                print("⚡ Claude is generating: '\(lineStr)'")
+                print("⚡ Claude is generating")
             }
             
             // File operations

@@ -35,6 +35,9 @@ struct SwiftUITerminalView: NSViewRepresentable {
         weak var terminalView: LocalProcessTerminalView?
         private var outputTimer: Timer?
         private var lastCapturedContent = ""
+        private var lastContentLength = 0
+        private var lastChangeTime = Date()
+        private var wasShowingEsc = false
         
         init(_ parent: SwiftUITerminalView) {
             self.parent = parent
@@ -69,15 +72,14 @@ struct SwiftUITerminalView: NSViewRepresentable {
         
         // Start capturing output periodically
         func startOutputCapture() {
-            print("🔄 Starting output capture timer")
-            outputTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+            print("🔄 Starting output capture timer (0.5s interval)")
+            outputTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
                 self.captureOutput()
             }
         }
         
         private func captureOutput() {
             guard let terminal = terminalView?.terminal else { 
-                print("⚠️ Cannot capture output: terminal is nil")
                 return 
             }
             
@@ -86,21 +88,52 @@ struct SwiftUITerminalView: NSViewRepresentable {
                 DispatchQueue.main.async {
                     self.parent.terminalOutput = content
                     
-                    // Always update raw feed and process output
+                    // Check if content length changed
+                    let currentLength = content.count
+                    let lengthChanged = currentLength != self.lastContentLength
+                    
+                    if lengthChanged {
+                        // Calculate time since last change
+                        let timeSinceLastChange = Date().timeIntervalSince(self.lastChangeTime)
+                        
+                        // Log the change with timing info
+                        if currentLength > self.lastContentLength {
+                            print("📊 Terminal grew: \(self.lastContentLength) → \(currentLength) chars (+\(currentLength - self.lastContentLength)) after \(String(format: "%.1f", timeSinceLastChange))s")
+                        } else {
+                            print("📊 Terminal shrank: \(self.lastContentLength) → \(currentLength) chars (\(currentLength - self.lastContentLength)) after \(String(format: "%.1f", timeSinceLastChange))s")
+                        }
+                        
+                        self.lastContentLength = currentLength
+                        self.lastChangeTime = Date()
+                    }
+                    
+                    // Always update raw feed FIRST
                     let displayContent = content.isEmpty ? "No content captured..." : content
                     self.parent.viewModel.rawTerminalFeed = displayContent
-                    print("📊 Raw feed updated with \(content.count) characters")
+                    
+                    // Check for esc pattern
+                    let hasEscPattern = content.contains("esc to interrupt")
+                    if hasEscPattern != self.wasShowingEsc {
+                        if hasEscPattern {
+                            print("🔴 ESC pattern detected - Claude is generating")
+                            self.parent.viewModel.setGenerating(true)
+                        } else {
+                            print("🟢 ESC pattern gone - Generation complete")
+                            self.parent.viewModel.setGenerating(false)
+                            // Extract response from the current terminal state
+                            self.parent.viewModel.extractPendingResponses()
+                        }
+                        self.wasShowingEsc = hasEscPattern
+                    }
                     
                     // Get only new content since last capture for processing
                     let newContent = String(content.dropFirst(self.lastCapturedContent.count))
                     if !newContent.isEmpty {
-                        print("📥 New output captured: '\(newContent.prefix(100))...'")
+                        print("📥 New content (\(newContent.count) chars)")
                         self.lastCapturedContent = content
                         self.parent.viewModel.processCommandCompletion(newContent)
                     }
                 }
-            } else {
-                print("⚠️ Failed to decode terminal buffer data")
             }
         }
     }
