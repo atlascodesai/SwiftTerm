@@ -35,63 +35,51 @@ class TerminalViewModel: ObservableObject {
     }
     
     func sendCommand(_ command: String) {
-        guard !command.isEmpty, let terminal = terminal else { 
-            print("❌ Cannot send command: terminal is nil or command is empty")
+        guard !command.isEmpty else { 
+            print("❌ Cannot send command: command is empty")
+            return 
+        }
+        
+        guard let terminal = terminal else { 
+            print("❌ Cannot send command: terminal is nil")
             return 
         }
         
         print("📤 Sending command: '\(command)'")
+        print("🔍 Terminal: \(terminal)")
+        print("🔍 Terminal window: \(terminal.window)")
+        print("🔍 Terminal accepts first responder: \(terminal.acceptsFirstResponder)")
         
         // Focus the terminal first
-        terminal.window?.makeFirstResponder(terminal)
-        
-        // Small delay to ensure focus
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            // Try simulating keyboard events
-            if let event = NSEvent.keyEvent(
-                with: .keyDown,
-                location: .zero,
-                modifierFlags: [],
-                timestamp: 0,
-                windowNumber: terminal.window?.windowNumber ?? 0,
-                context: nil,
-                characters: command,
-                charactersIgnoringModifiers: command,
-                isARepeat: false,
-                keyCode: 0
-            ) {
-                terminal.keyDown(with: event)
-            }
-            
-            // Then send Enter key event
-            if let enterEvent = NSEvent.keyEvent(
-                with: .keyDown,
-                location: .zero,
-                modifierFlags: [],
-                timestamp: 0,
-                windowNumber: terminal.window?.windowNumber ?? 0,
-                context: nil,
-                characters: "\r",
-                charactersIgnoringModifiers: "\r",
-                isARepeat: false,
-                keyCode: 36 // Enter key code
-            ) {
-                terminal.keyDown(with: enterEvent)
-            }
+        if let window = terminal.window {
+            window.makeFirstResponder(terminal)
+            print("✅ Made terminal first responder")
+        } else {
+            print("⚠️ Terminal has no window")
         }
         
-        // Track command
-        let entry = CommandEntry(
-            timestamp: Date(),
-            command: command,
-            rawResponse: "",
-            isClaudeCommand: isClaudeRunning
-        )
-        commandHistory.append(entry)
-        commandResponses.append(entry)
-        userCommands.append(command)
+        // Send the command
+        print("🔄 Sending command text...")
+        terminal.send(txt: command)
         
-        print("✅ Command sent via keyboard events")
+        // Small delay to ensure the text is processed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            print("🔄 Sending Enter key...")
+            terminal.send([13]) // CR (carriage return)
+            
+            // Track command after sending
+            let entry = CommandEntry(
+                timestamp: Date(),
+                command: command,
+                rawResponse: "",
+                isClaudeCommand: self.isClaudeRunning
+            )
+            self.commandHistory.append(entry)
+            self.commandResponses.append(entry)
+            self.userCommands.append(command)
+            
+            print("✅ Command sent with CR (13)")
+        }
     }
     
     // Method 1: CR (13)
