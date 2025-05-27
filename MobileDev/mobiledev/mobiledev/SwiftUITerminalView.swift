@@ -70,7 +70,7 @@ struct SwiftUITerminalView: NSViewRepresentable {
         // Start capturing output periodically
         func startOutputCapture() {
             print("🔄 Starting output capture timer")
-            outputTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            outputTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
                 self.captureOutput()
             }
         }

@@ -19,6 +19,9 @@ class TerminalViewModel: ObservableObject {
     private var claudeDetected = false
     private var outputAnalyzer = ClaudeOutputAnalyzer()
     private var wasGenerating = false
+    private var lastPromptPosition = 0
+    private var waitingForResponse = false
+    private var capturedContent = ""  // Accumulate content separately
     
     struct CommandEntry: Identifiable {
         let id = UUID()
@@ -26,6 +29,10 @@ class TerminalViewModel: ObservableObject {
         let command: String
         var rawResponse: String = ""
         let isClaudeCommand: Bool
+        var isComplete: Bool = false
+        var claudeGenerating: Bool = false
+        var terminalSnapshotBefore: String = ""
+        var terminalSnapshotAfter: String = ""
     }
     
     // MARK: - Terminal Management
@@ -58,9 +65,16 @@ class TerminalViewModel: ObservableObject {
             print("⚠️ Terminal has no window")
         }
         
+        // Capture terminal state before sending command
+        let snapshotBefore = rawTerminalFeed
+        
         // Send the command
         print("🔄 Sending command text...")
         terminal.send(txt: command)
+        
+        // Mark that we're waiting for a response
+        waitingForResponse = true
+        lastPromptPosition = rawTerminalFeed.count
         
         // Small delay to ensure the text is processed
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -72,7 +86,11 @@ class TerminalViewModel: ObservableObject {
                 timestamp: Date(),
                 command: command,
                 rawResponse: "",
-                isClaudeCommand: self.isClaudeRunning
+                isClaudeCommand: self.isClaudeRunning,
+                isComplete: false,
+                claudeGenerating: false,
+                terminalSnapshotBefore: snapshotBefore,
+                terminalSnapshotAfter: ""
             )
             self.commandHistory.append(entry)
             self.commandResponses.append(entry)
@@ -262,8 +280,6 @@ class TerminalViewModel: ObservableObject {
         sendCommand("claude")
         isClaudeRunning = true
         claudeState = "Starting..."
-        userCommands.removeAll() // Clear commands when starting new session
-        commandResponses.removeAll() // Clear command history
         print("🚀 Claude launched, commands will be tracked")
     }
     
@@ -286,14 +302,114 @@ class TerminalViewModel: ObservableObject {
         return visibleLines.joined(separator: "\n")
     }
     
-    func processCommandCompletion(_ output: String) {
-        // Update last command response with new output
-        if !commandResponses.isEmpty {
-            commandResponses[commandResponses.count - 1].rawResponse += output
+    private func cleanupLastResponse() {
+        guard !commandResponses.isEmpty else { return }
+        let lastIndex = commandResponses.count - 1
+        
+        // Special handling for claude command - keep the welcome box intact
+        if commandResponses[lastIndex].command == "claude" && 
+           commandResponses[lastIndex].rawResponse.contains("Welcome to Claude Code!") {
+            // Don't clean up the welcome box
+            return
         }
         
+        // Clean up the response by removing prompt artifacts
+        let response = commandResponses[lastIndex].rawResponse
+        let lines = response.split(separator: "\n", omittingEmptySubsequences: false)
+        
+        var cleanedLines: [String] = []
+        for line in lines {
+            let lineStr = String(line)
+            
+            // Skip prompt-related lines but keep content lines
+            if lineStr.contains("│ >") && lineStr.contains("│") && !lineStr.contains("●") && !lineStr.contains("⏺") {
+                continue
+            }
+            if lineStr.contains("╭─") && lineStr.contains("─╮") && !lineStr.contains("Welcome") {
+                continue
+            }
+            if lineStr.contains("╰─") && lineStr.contains("─╯") && !lineStr.contains("Welcome") {
+                continue
+            }
+            if lineStr == "? for shortcuts" || lineStr.trimmingCharacters(in: .whitespaces) == "? for shortcuts" {
+                continue
+            }
+            
+            cleanedLines.append(lineStr)
+        }
+        
+        commandResponses[lastIndex].rawResponse = cleanedLines.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    private func updateCommandResponses() {
+        // This method is no longer needed since we capture in real-time
+        // Keeping it empty for compatibility
+    }
+    
+    func processCommandCompletion(_ output: String) {
         // Debug: Show what new content we received
         print("📨 New content (\(output.count) chars): '\(output.prefix(200))'")
+        
+        // Accumulate all content we see
+        capturedContent += output
+        
+        // If we're waiting for a response, capture it
+        if waitingForResponse && !commandResponses.isEmpty {
+            let lastIndex = commandResponses.count - 1
+            
+            // Look for meaningful content in the new output
+            let cleanedOutput = output
+                .replacingOccurrences(of: "\r", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Skip empty updates
+            if !cleanedOutput.isEmpty && !cleanedOutput.allSatisfy({ $0 == "\n" }) {
+                // Special handling for the welcome box
+                if commandResponses[lastIndex].command == "claude" && 
+                   output.contains("Welcome to Claude Code!") {
+                    // Capture the entire welcome box
+                    commandResponses[lastIndex].rawResponse = output
+                    print("📝 Captured Claude welcome box")
+                } else {
+                    // Append non-empty content to the response
+                    if !commandResponses[lastIndex].rawResponse.isEmpty {
+                        commandResponses[lastIndex].rawResponse += "\n"
+                    }
+                    commandResponses[lastIndex].rawResponse += cleanedOutput
+                    print("📝 Appended to response: '\(cleanedOutput.prefix(50))...'")
+                }
+            }
+            
+            // Check if this is Claude generating
+            if output.contains("tokens") && output.contains("esc to interrupt") ||
+               output.contains("⏺") || output.contains("●") {
+                commandResponses[lastIndex].claudeGenerating = true
+                print("⚡ Command \(lastIndex) is generating")
+            }
+            
+            // Check if command is complete (new prompt appears)
+            if output.contains("│ >") && output.contains("│") && !output.contains("tokens") {
+                commandResponses[lastIndex].isComplete = true
+                commandResponses[lastIndex].claudeGenerating = false
+                waitingForResponse = false
+                print("✅ Command \(lastIndex) completed")
+                
+                // Clean up the final response
+                cleanupLastResponse()
+            }
+            
+            // Also check for simple prompt
+            if output.contains("> ") && output.contains("for shortcuts") {
+                commandResponses[lastIndex].isComplete = true
+                commandResponses[lastIndex].claudeGenerating = false
+                waitingForResponse = false
+                print("✅ Command \(lastIndex) completed (simple prompt)")
+                
+                // Clean up the final response
+                cleanupLastResponse()
+            }
+        }
         
         // Analyze output
         if currentCommand == "which claude" && output.contains("/claude") {
@@ -301,7 +417,16 @@ class TerminalViewModel: ObservableObject {
         }
         
         // Check for generation pattern in the NEW output
-        if output.contains("tokens") && output.contains("esc to interrupt") {
+        let generationPatterns = [
+            "tokens",
+            "Type: working",
+            "●", "◐", "◓", "◑",  // Spinning dots
+            "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"  // Braille spinners
+        ]
+        
+        let hasGenerationPattern = generationPatterns.contains { output.contains($0) }
+        
+        if hasGenerationPattern || (output.contains("tokens") && output.contains("esc to interrupt")) {
             print("⚡ Found generation pattern in NEW output!")
             claudeState = "Generating response..."
             wasGenerating = true
@@ -325,6 +450,12 @@ class TerminalViewModel: ObservableObject {
             if wasGenerating && !isCurrentlyGenerating && analysis.type == .ready {
                 print("✅ Claude finished generating response")
                 claudeState = "Ready for input"
+                
+                // Mark last command as complete
+                if !commandResponses.isEmpty {
+                    commandResponses[commandResponses.count - 1].isComplete = true
+                    commandResponses[commandResponses.count - 1].claudeGenerating = false
+                }
             }
             
             wasGenerating = isCurrentlyGenerating
@@ -336,6 +467,12 @@ class TerminalViewModel: ObservableObject {
             print("✅ Generation completed, ready for input")
             claudeState = "Ready for input"
             wasGenerating = false
+            
+            // Mark last command as complete
+            if !commandResponses.isEmpty {
+                commandResponses[commandResponses.count - 1].isComplete = true
+                commandResponses[commandResponses.count - 1].claudeGenerating = false
+            }
         }
     }
     
@@ -458,9 +595,15 @@ struct ClaudeOutputAnalyzer {
                 outputType = .thinking
             }
             
-            // Claude generation indicator - look for "tokens" and "esc to interrupt"
-            // Pattern: "✶ [Word]... (2s · ↑ 0 tokens · esc to interrupt)"
-            if lineStr.contains("tokens") && lineStr.contains("esc to interrupt") {
+            // Claude generation indicator - look for various patterns
+            // Pattern 1: "✶ [Word]... (2s · ↑ 0 tokens · esc to interrupt)"
+            // Pattern 2: "Type: working" or similar status indicators
+            // Pattern 3: Spinning indicators or progress markers
+            if (lineStr.contains("tokens") && lineStr.contains("esc to interrupt")) ||
+               lineStr.contains("Type: working") ||
+               lineStr.contains("●") || lineStr.contains("◐") || lineStr.contains("◓") || lineStr.contains("◑") ||
+               lineStr.contains("⣾") || lineStr.contains("⣽") || lineStr.contains("⣻") || lineStr.contains("⢿") ||
+               lineStr.contains("⡿") || lineStr.contains("⣟") || lineStr.contains("⣯") || lineStr.contains("⣷") {
                 outputType = .working
                 print("⚡ Claude is generating: '\(lineStr)'")
             }

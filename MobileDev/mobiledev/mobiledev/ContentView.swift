@@ -11,6 +11,9 @@ struct ContentView: View {
     @StateObject private var viewModel = TerminalViewModel()
     @State private var inputCommand = ""
     @State private var showAnalysisPanel = false
+    @State private var expandedCommands: Set<UUID> = []
+    @State private var copiedItemId: UUID? = nil
+    @State private var copiedRawFeed = false
     
     var body: some View {
         NavigationStack {
@@ -100,7 +103,16 @@ struct ContentView: View {
                 if showAnalysisPanel {
                     Divider()
                     
-                    AnalysisPanel(analysis: viewModel.lastAnalysis, claudeState: viewModel.claudeState, rawFeed: viewModel.rawTerminalFeed, userCommands: viewModel.userCommands, commandResponses: viewModel.commandResponses)
+                    AnalysisPanel(
+                        analysis: viewModel.lastAnalysis,
+                        claudeState: viewModel.claudeState,
+                        rawFeed: viewModel.rawTerminalFeed,
+                        userCommands: viewModel.userCommands,
+                        commandResponses: viewModel.commandResponses,
+                        expandedCommands: $expandedCommands,
+                        copiedItemId: $copiedItemId,
+                        copiedRawFeed: $copiedRawFeed
+                    )
                         .frame(width: 300)
                         .background(Color(NSColor.controlBackgroundColor))
                         .transition(.move(edge: .trailing))
@@ -122,6 +134,9 @@ struct AnalysisPanel: View {
     let rawFeed: String
     let userCommands: [String]
     let commandResponses: [TerminalViewModel.CommandEntry]
+    @Binding var expandedCommands: Set<UUID>
+    @Binding var copiedItemId: UUID?
+    @Binding var copiedRawFeed: Bool
     
     var body: some View {
         ScrollView {
@@ -203,23 +218,87 @@ struct AnalysisPanel: View {
                             
                             ForEach(commandResponses) { entry in
                                 VStack(alignment: .leading, spacing: 4) {
-                                    // Command
+                                    // Command header with expand/collapse
                                     HStack {
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundColor(.blue)
+                                        Button(action: {
+                                            if expandedCommands.contains(entry.id) {
+                                                expandedCommands.remove(entry.id)
+                                            } else {
+                                                expandedCommands.insert(entry.id)
+                                            }
+                                        }) {
+                                            Image(systemName: expandedCommands.contains(entry.id) ? "chevron.down" : "chevron.right")
+                                                .font(.caption)
+                                                .foregroundColor(.blue)
+                                        }
+                                        .buttonStyle(.plain)
+                                        
                                         Text(entry.command)
                                             .font(.system(.caption, design: .monospaced))
                                             .foregroundColor(.blue)
+                                            .lineLimit(1)
+                                        
+                                        Spacer()
+                                        
+                                        if entry.claudeGenerating {
+                                            HStack(spacing: 4) {
+                                                ProgressView()
+                                                    .scaleEffect(0.7)
+                                                Text("Generating...")
+                                                    .font(.caption)
+                                                    .foregroundColor(.orange)
+                                            }
+                                        } else if entry.isComplete {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.caption)
+                                                .foregroundColor(.green)
+                                        }
                                     }
                                     
-                                    // Response (truncated)
-                                    if !entry.rawResponse.isEmpty {
-                                        Text(String(entry.rawResponse.prefix(200)))
-                                            .font(.system(.caption, design: .monospaced))
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(3)
+                                    // Expanded response
+                                    if expandedCommands.contains(entry.id) && !entry.rawResponse.isEmpty {
+                                        let cleanedResponse = entry.rawResponse
+                                            .replacingOccurrences(of: "\r", with: "\n")
+                                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                                        
+                                        if !cleanedResponse.isEmpty {
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                ScrollView {
+                                                    Text(cleanedResponse)
+                                                        .font(.system(.caption, design: .monospaced))
+                                                        .foregroundColor(.secondary)
+                                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                                        .padding(8)
+                                                        .background(Color.black.opacity(0.1))
+                                                        .cornerRadius(4)
+                                                }
+                                                .frame(maxHeight: 200)
+                                                
+                                                // Copy button
+                                                Button(action: {
+                                                    NSPasteboard.general.clearContents()
+                                                    NSPasteboard.general.setString(cleanedResponse, forType: .string)
+                                                    copiedItemId = entry.id
+                                                    
+                                                    // Reset after 2 seconds
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                                        if copiedItemId == entry.id {
+                                                            copiedItemId = nil
+                                                        }
+                                                    }
+                                                }) {
+                                                    HStack(spacing: 4) {
+                                                        Image(systemName: copiedItemId == entry.id ? "checkmark" : "doc.on.doc")
+                                                            .font(.caption)
+                                                        Text(copiedItemId == entry.id ? "Copied!" : "Copy Response")
+                                                            .font(.caption)
+                                                    }
+                                                    .foregroundColor(copiedItemId == entry.id ? .green : .accentColor)
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
                                             .padding(.leading, 16)
+                                        }
                                     }
                                 }
                                 .padding(.vertical, 2)
@@ -287,9 +366,34 @@ struct AnalysisPanel: View {
                 // Raw Terminal Feed
                 Divider()
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Raw Terminal Feed")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                    HStack {
+                        Text("Raw Terminal Feed")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        
+                        Spacer()
+                        
+                        // Copy raw feed button
+                        Button(action: {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(rawFeed, forType: .string)
+                            copiedRawFeed = true
+                            
+                            // Reset after 2 seconds
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                copiedRawFeed = false
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: copiedRawFeed ? "checkmark" : "doc.on.doc")
+                                    .font(.caption)
+                                Text(copiedRawFeed ? "Copied!" : "Copy All")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(copiedRawFeed ? .green : .accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
                     
                     ScrollView {
                         Text(rawFeed.isEmpty ? "No output captured yet..." : rawFeed)
