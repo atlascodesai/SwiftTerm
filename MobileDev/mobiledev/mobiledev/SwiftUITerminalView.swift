@@ -152,6 +152,22 @@ struct SwiftUITerminalView: NSViewRepresentable {
                         print("🎯 Options visible in terminal - triggering detection")
                         self.parent.viewModel.detectOptionsInTerminal(content)
                     }
+                    
+                    // Check if Claude is waiting for input after option 3 (esc)
+                    // Look for the state after selecting option 3
+                    if self.parent.viewModel.isClaudeRunning && 
+                       !hasEscPattern &&
+                       self.parent.viewModel.claudeState == "Generating response..." {
+                        // Check if the terminal ends with just "> " on the last line (waiting for input)
+                        let lines = content.split(separator: "\n")
+                        if let lastLine = lines.last {
+                            let trimmed = String(lastLine).trimmingCharacters(in: .whitespaces)
+                            if trimmed == ">" || (trimmed.isEmpty && lines.count > 1 && String(lines[lines.count - 2]).contains(">")) {
+                                print("🔵 Claude is waiting for input")
+                                self.parent.viewModel.claudeState = "Waiting for input"
+                            }
+                        }
+                    }
 
                     // Get only new content since last capture for processing
                     let newContent = String(content.dropFirst(self.lastCapturedContent.count))

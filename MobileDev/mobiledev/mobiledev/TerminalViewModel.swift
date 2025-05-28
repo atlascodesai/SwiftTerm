@@ -322,6 +322,10 @@ class TerminalViewModel: ObservableObject {
                 self.sendArrowDown()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self.sendEnter()
+                    // Option 3 means Claude is waiting for input
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        self.claudeState = "Waiting for input"
+                    }
                 }
             }
         } else {
