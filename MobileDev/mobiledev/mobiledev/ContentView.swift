@@ -12,9 +12,9 @@ struct ContentView: View {
     @State private var inputCommand = ""
     @State private var showAnalysisPanel = false
     @State private var expandedCommands: Set<UUID> = []
-    @State private var copiedItemId: UUID? = nil
+    @State private var copiedItemId: UUID?
     @State private var copiedRawFeed = false
-    
+
     var body: some View {
         NavigationStack {
             HStack(spacing: 0) {
@@ -43,9 +43,9 @@ struct ContentView: View {
                         }
                         .padding()
                     }
-                    
+
                     Divider()
-                    
+
                     // Command Input
                     HStack {
                         TextField("Enter command...", text: $inputCommand)
@@ -57,7 +57,7 @@ struct ContentView: View {
                                 }
                             }
                             .submitLabel(.send)
-                        
+
                         // Arrow buttons for navigation
                         if viewModel.isClaudeRunning {
                             Button(action: {
@@ -68,7 +68,7 @@ struct ContentView: View {
                             }
                             .buttonStyle(.borderless)
                             .help("Move up")
-                            
+
                             Button(action: {
                                 viewModel.sendArrowDown()
                             }) {
@@ -78,7 +78,7 @@ struct ContentView: View {
                             .buttonStyle(.borderless)
                             .help("Move down")
                         }
-                        
+
                         Button("Send") {
                             if !inputCommand.isEmpty {
                                 viewModel.sendCommand(inputCommand)
@@ -88,7 +88,7 @@ struct ContentView: View {
                                 viewModel.sendEnter()
                             }
                         }
-                        
+
                         if viewModel.isClaudeRunning {
                             Button("Exit Claude") {
                                 viewModel.exitClaude()
@@ -102,7 +102,7 @@ struct ContentView: View {
                         }
                     }
                     .padding()
-                    
+
                     // Option buttons when options are detected
                     if viewModel.showOptionButtons && !viewModel.detectedOptions.isEmpty {
                         HStack(spacing: 12) {
@@ -134,14 +134,14 @@ struct ContentView: View {
                         }
                         .padding(.horizontal)
                     }
-                    
+
                     // Status Bar
                     HStack {
-                        Label(viewModel.currentDirectory.isEmpty ? "~" : viewModel.currentDirectory, 
+                        Label(viewModel.currentDirectory.isEmpty ? "~" : viewModel.currentDirectory,
                               systemImage: "folder")
-                        
+
                         Spacer()
-                        
+
                         if viewModel.isClaudeRunning {
                             Label("Claude: \(viewModel.claudeState)", systemImage: "brain")
                                 .foregroundColor(.green)
@@ -154,11 +154,11 @@ struct ContentView: View {
                     .background(Color.gray.opacity(0.1))
                     .font(.caption)
                 }
-                
+
                 // Analysis Panel
                 if showAnalysisPanel {
                     Divider()
-                    
+
                     AnalysisPanel(
                         analysis: viewModel.lastAnalysis,
                         claudeState: viewModel.claudeState,
@@ -193,7 +193,7 @@ struct AnalysisPanel: View {
     @Binding var expandedCommands: Set<UUID>
     @Binding var copiedItemId: UUID?
     @Binding var copiedRawFeed: Bool
-    
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -202,14 +202,14 @@ struct AnalysisPanel: View {
                     .font(.headline)
                     .padding(.horizontal)
                     .padding(.top)
-                
+
                 // Current State
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Label(claudeState, systemImage: "brain")
                             .foregroundColor(claudeState.contains("Generating") ? .orange : .blue)
                     }
-                    
+
                     if let analysis = analysis {
                         Text("Type: \(String(describing: analysis.type))")
                             .font(.caption)
@@ -217,17 +217,17 @@ struct AnalysisPanel: View {
                     }
                 }
                 .padding(.horizontal)
-                
+
                 if let analysis = analysis {
                     Divider()
-                    
+
                     // File Operations
                     if !analysis.filesRead.isEmpty || !analysis.filesCreated.isEmpty || !analysis.filesModified.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("File Operations")
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
-                            
+
                             if !analysis.filesRead.isEmpty {
                                 Label("Read", systemImage: "doc.text")
                                     .font(.caption)
@@ -238,7 +238,7 @@ struct AnalysisPanel: View {
                                         .padding(.leading)
                                 }
                             }
-                            
+
                             if !analysis.filesCreated.isEmpty {
                                 Label("Created", systemImage: "doc.badge.plus")
                                     .font(.caption)
@@ -249,7 +249,7 @@ struct AnalysisPanel: View {
                                         .padding(.leading)
                                 }
                             }
-                            
+
                             if !analysis.filesModified.isEmpty {
                                 Label("Modified", systemImage: "doc.badge.gearshape")
                                     .font(.caption)
@@ -263,7 +263,7 @@ struct AnalysisPanel: View {
                         }
                         .padding(.horizontal)
                     }
-                    
+
                     // Command/Response History
                     if !commandResponses.isEmpty {
                         Divider()
@@ -271,7 +271,7 @@ struct AnalysisPanel: View {
                             Text("Command History")
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
-                            
+
                             ForEach(commandResponses) { entry in
                                 VStack(alignment: .leading, spacing: 4) {
                                     // Command header with expand/collapse
@@ -288,14 +288,26 @@ struct AnalysisPanel: View {
                                                 .foregroundColor(.blue)
                                         }
                                         .buttonStyle(.plain)
-                                        
-                                        Text(entry.command)
-                                            .font(.system(.caption, design: .monospaced))
-                                            .foregroundColor(.blue)
-                                            .lineLimit(1)
-                                        
+
+                                        if entry.selectedOption != nil {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "checkmark.square.fill")
+                                                    .font(.caption)
+                                                    .foregroundColor(.green)
+                                                Text(entry.command)
+                                                    .font(.system(.caption, design: .monospaced))
+                                                    .foregroundColor(.green)
+                                                    .lineLimit(1)
+                                            }
+                                        } else {
+                                            Text(entry.command)
+                                                .font(.system(.caption, design: .monospaced))
+                                                .foregroundColor(.blue)
+                                                .lineLimit(1)
+                                        }
+
                                         Spacer()
-                                        
+
                                         if entry.claudeGenerating {
                                             HStack(spacing: 4) {
                                                 ProgressView()
@@ -310,15 +322,30 @@ struct AnalysisPanel: View {
                                                 .foregroundColor(.green)
                                         }
                                     }
-                                    
+
                                     // Expanded response
-                                    if expandedCommands.contains(entry.id) && !entry.rawResponse.isEmpty {
-                                        let cleanedResponse = entry.rawResponse
-                                            .replacingOccurrences(of: "\r", with: "\n")
-                                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                                        
-                                        if !cleanedResponse.isEmpty {
+                                    if expandedCommands.contains(entry.id) {
+                                        // For option selections, show what was selected
+                                        if let selectedOption = entry.selectedOption {
                                             VStack(alignment: .leading, spacing: 4) {
+                                                Text("Option selected:")
+                                                    .font(.caption2)
+                                                    .foregroundColor(.secondary)
+                                                Text(selectedOption)
+                                                    .font(.system(.caption, design: .monospaced))
+                                                    .foregroundColor(.green)
+                                                    .padding(8)
+                                                    .background(Color.green.opacity(0.1))
+                                                    .cornerRadius(4)
+                                            }
+                                            .padding(.top, 4)
+                                        } else if !entry.rawResponse.isEmpty {
+                                            let cleanedResponse = entry.rawResponse
+                                                .replacingOccurrences(of: "\r", with: "\n")
+                                                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                                            if !cleanedResponse.isEmpty {
+                                                VStack(alignment: .leading, spacing: 4) {
                                                 ScrollView {
                                                     Text(cleanedResponse)
                                                         .font(.system(.caption, design: .monospaced))
@@ -329,13 +356,13 @@ struct AnalysisPanel: View {
                                                         .cornerRadius(4)
                                                 }
                                                 .frame(maxHeight: 200)
-                                                
+
                                                 // Copy button
                                                 Button(action: {
                                                     NSPasteboard.general.clearContents()
                                                     NSPasteboard.general.setString(cleanedResponse, forType: .string)
                                                     copiedItemId = entry.id
-                                                    
+
                                                     // Reset after 2 seconds
                                                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                                                         if copiedItemId == entry.id {
@@ -352,8 +379,9 @@ struct AnalysisPanel: View {
                                                     .foregroundColor(copiedItemId == entry.id ? .green : .accentColor)
                                                 }
                                                 .buttonStyle(.plain)
+                                                }
+                                                .padding(.leading, 16)
                                             }
-                                            .padding(.leading, 16)
                                         }
                                     }
                                 }
@@ -362,7 +390,7 @@ struct AnalysisPanel: View {
                         }
                         .padding(.horizontal)
                     }
-                    
+
                     // Build/Test Status
                     if analysis.type == .buildOutput {
                         Divider()
@@ -370,14 +398,14 @@ struct AnalysisPanel: View {
                             Text("Build Status")
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
-                            
+
                             HStack {
                                 Image(systemName: analysis.buildSuccessful ? "checkmark.circle.fill" : "xmark.circle.fill")
                                     .foregroundColor(analysis.buildSuccessful ? .green : .red)
                                 Text(analysis.buildSuccessful ? "Build Succeeded" : "Build Failed")
                                     .font(.caption)
                             }
-                            
+
                             if analysis.testsRun {
                                 HStack {
                                     Image(systemName: "testtube.2")
@@ -389,7 +417,7 @@ struct AnalysisPanel: View {
                         }
                         .padding(.horizontal)
                     }
-                    
+
                     // Errors
                     if let error = analysis.error {
                         Divider()
@@ -398,14 +426,14 @@ struct AnalysisPanel: View {
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.red)
-                            
+
                             Text(error)
                                 .font(.caption)
                                 .foregroundColor(.red)
                         }
                         .padding(.horizontal)
                     }
-                    
+
                     // Completion Status
                     if analysis.isComplete {
                         Divider()
@@ -418,7 +446,7 @@ struct AnalysisPanel: View {
                         .padding(.horizontal)
                     }
                 }
-                
+
                 // Raw Terminal Feed
                 Divider()
                 VStack(alignment: .leading, spacing: 8) {
@@ -426,15 +454,15 @@ struct AnalysisPanel: View {
                         Text("Raw Terminal Feed")
                             .font(.subheadline)
                             .fontWeight(.semibold)
-                        
+
                         Spacer()
-                        
+
                         // Copy raw feed button
                         Button(action: {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(rawFeed, forType: .string)
                             copiedRawFeed = true
-                            
+
                             // Reset after 2 seconds
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                                 copiedRawFeed = false
@@ -450,7 +478,7 @@ struct AnalysisPanel: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    
+
                     ScrollView {
                         Text(rawFeed.isEmpty ? "No output captured yet..." : rawFeed)
                             .font(.system(.caption, design: .monospaced))
@@ -463,7 +491,7 @@ struct AnalysisPanel: View {
                     .frame(maxHeight: 200)
                 }
                 .padding(.horizontal)
-                
+
                 Spacer()
             }
         }

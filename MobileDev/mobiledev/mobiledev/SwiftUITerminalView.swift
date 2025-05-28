@@ -16,7 +16,7 @@ struct SwiftUITerminalView: NSViewRepresentable {
     let projectPath: String
     let onReady: ((LocalProcessTerminalView) -> Void)?
     @ObservedObject var viewModel: TerminalViewModel
-    
+
     init(terminalOutput: Binding<String> = .constant(""),
          currentDirectory: Binding<String> = .constant(""),
          projectPath: String = "/Users/timapple/Documents/Github",
@@ -28,7 +28,7 @@ struct SwiftUITerminalView: NSViewRepresentable {
         self.onReady = onReady
         self.viewModel = viewModel
     }
-    
+
     class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
         var parent: SwiftUITerminalView
         var processStarted = false
@@ -38,25 +38,25 @@ struct SwiftUITerminalView: NSViewRepresentable {
         private var lastContentLength = 0
         private var lastChangeTime = Date()
         private var wasShowingEsc = false
-        
+
         init(_ parent: SwiftUITerminalView) {
             self.parent = parent
             super.init()
         }
-        
+
         deinit {
             outputTimer?.invalidate()
         }
-        
+
         // MARK: - LocalProcessTerminalViewDelegate
         func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
             // Handle size changes if needed
         }
-        
+
         func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
             // Handle title changes if needed
         }
-        
+
         func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {
             if let dir = directory {
                 DispatchQueue.main.async {
@@ -64,12 +64,12 @@ struct SwiftUITerminalView: NSViewRepresentable {
                 }
             }
         }
-        
+
         func processTerminated(source: SwiftTerm.TerminalView, exitCode: Int32?) {
             print("Process terminated with exit code: \(exitCode ?? -1)")
             outputTimer?.invalidate()
         }
-        
+
         // Start capturing output periodically
         func startOutputCapture() {
             print("🔄 Starting output capture timer (0.5s interval)")
@@ -77,48 +77,48 @@ struct SwiftUITerminalView: NSViewRepresentable {
                 self.captureOutput()
             }
         }
-        
+
         private func captureOutput() {
-            guard let terminal = terminalView?.terminal else { 
-                return 
+            guard let terminal = terminalView?.terminal else {
+                return
             }
-            
+
             let data = terminal.getBufferAsData()
             if let content = String(data: data, encoding: .utf8) {
                 DispatchQueue.main.async {
                     self.parent.terminalOutput = content
-                    
+
                     // Check if content length changed
                     let currentLength = content.count
                     let lengthChanged = currentLength != self.lastContentLength
-                    
+
                     if lengthChanged {
                         // Calculate time since last change
                         let timeSinceLastChange = Date().timeIntervalSince(self.lastChangeTime)
-                        
+
                         // Log the change with timing info
                         if currentLength > self.lastContentLength {
                             print("📊 Terminal grew: \(self.lastContentLength) → \(currentLength) chars (+\(currentLength - self.lastContentLength)) after \(String(format: "%.1f", timeSinceLastChange))s")
                         } else {
                             print("📊 Terminal shrank: \(self.lastContentLength) → \(currentLength) chars (\(currentLength - self.lastContentLength)) after \(String(format: "%.1f", timeSinceLastChange))s")
                         }
-                        
+
                         self.lastContentLength = currentLength
                         self.lastChangeTime = Date()
                     }
-                    
+
                     // Always update raw feed FIRST
                     let displayContent = content.isEmpty ? "No content captured..." : content
                     self.parent.viewModel.rawTerminalFeed = displayContent
-                    
+
                     // Check for esc pattern
                     let hasEscPattern = content.contains("esc to interrupt")
-                    
+
                     // Also check if Claude is showing its prompt (ready for input)
-                    let claudePromptVisible = self.parent.viewModel.isClaudeRunning && 
-                                            (content.contains("│ >") && content.contains("│") && 
+                    let claudePromptVisible = self.parent.viewModel.isClaudeRunning &&
+                                            (content.contains("│ >") && content.contains("│") &&
                                              content.contains("? for shortcuts"))
-                    
+
                     if hasEscPattern != self.wasShowingEsc {
                         if hasEscPattern {
                             print("🔴 ESC pattern detected - Claude is generating")
@@ -136,9 +136,9 @@ struct SwiftUITerminalView: NSViewRepresentable {
                         self.parent.viewModel.setGenerating(false)
                         self.parent.viewModel.extractPendingResponses()
                     }
-                    
+
                     // Special case: If Claude just showed options (1., 2., 3.), extract immediately
-                    if content.contains("1.") && content.contains("2.") && content.contains("3.") && 
+                    if content.contains("1.") && content.contains("2.") && content.contains("3.") &&
                        content.contains("Do you want to") && !self.parent.viewModel.commandResponses.isEmpty {
                         let lastIdx = self.parent.viewModel.commandResponses.count - 1
                         if self.parent.viewModel.commandResponses[lastIdx].rawResponse.isEmpty {
@@ -146,13 +146,13 @@ struct SwiftUITerminalView: NSViewRepresentable {
                             self.parent.viewModel.extractPendingResponses()
                         }
                     }
-                    
+
                     // Also detect options immediately when we see the pattern
                     if content.contains("❯ 1.") && content.contains("2.") && content.contains("3.") {
                         print("🎯 Options visible in terminal - triggering detection")
                         self.parent.viewModel.detectOptionsInTerminal(content)
                     }
-                    
+
                     // Get only new content since last capture for processing
                     let newContent = String(content.dropFirst(self.lastCapturedContent.count))
                     if !newContent.isEmpty {
@@ -164,30 +164,30 @@ struct SwiftUITerminalView: NSViewRepresentable {
             }
         }
     }
-    
+
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
-    
+
     func makeNSView(context: Context) -> LocalProcessTerminalView {
         let terminal = LocalProcessTerminalView(frame: .zero)
         terminal.processDelegate = context.coordinator
-        
+
         // Store reference
         context.coordinator.terminalView = terminal
-        
+
         return terminal
     }
-    
+
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
         if !context.coordinator.processStarted {
             // Start process with specified working directory
             FileManager.default.changeCurrentDirectoryPath(projectPath)
             nsView.startProcess(executable: "/bin/zsh", execName: "-zsh")
-            
+
             context.coordinator.processStarted = true
             context.coordinator.startOutputCapture()
-            
+
             // Notify when ready and give focus
             DispatchQueue.main.async {
                 self.onReady?(nsView)
@@ -198,7 +198,6 @@ struct SwiftUITerminalView: NSViewRepresentable {
     }
 }
 
-
 #else
 // iOS version placeholder
 struct SwiftUITerminalView: UIViewRepresentable {
@@ -206,7 +205,7 @@ struct SwiftUITerminalView: UIViewRepresentable {
     @Binding var currentDirectory: String
     let projectPath: String
     let onReady: ((UIView) -> Void)?
-    
+
     init(terminalOutput: Binding<String> = .constant(""),
          currentDirectory: Binding<String> = .constant(""),
          projectPath: String = "/Users/timapple/Documents/Github",
@@ -216,11 +215,11 @@ struct SwiftUITerminalView: UIViewRepresentable {
         self.projectPath = projectPath
         self.onReady = onReady
     }
-    
+
     func makeUIView(context: Context) -> UIView {
         return UIView() // Placeholder for iOS
     }
-    
+
     func updateUIView(_ uiView: UIView, context: Context) {
         // Update if needed
     }
