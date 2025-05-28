@@ -58,10 +58,34 @@ struct ContentView: View {
                             }
                             .submitLabel(.send)
                         
+                        // Arrow buttons for navigation
+                        if viewModel.isClaudeRunning {
+                            Button(action: {
+                                viewModel.sendArrowUp()
+                            }) {
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 12))
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Move up")
+                            
+                            Button(action: {
+                                viewModel.sendArrowDown()
+                            }) {
+                                Image(systemName: "arrow.down")
+                                    .font(.system(size: 12))
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Move down")
+                        }
+                        
                         Button("Send") {
                             if !inputCommand.isEmpty {
                                 viewModel.sendCommand(inputCommand)
                                 inputCommand = ""
+                            } else if viewModel.isClaudeRunning {
+                                // If no command, just send Enter
+                                viewModel.sendEnter()
                             }
                         }
                         
@@ -78,6 +102,38 @@ struct ContentView: View {
                         }
                     }
                     .padding()
+                    
+                    // Option buttons when options are detected
+                    if viewModel.showOptionButtons && !viewModel.detectedOptions.isEmpty {
+                        HStack(spacing: 12) {
+                            ForEach(Array(viewModel.detectedOptions.enumerated()), id: \.offset) { index, option in
+                                Button(action: {
+                                    viewModel.selectOption(index + 1)
+                                    viewModel.showOptionButtons = false
+                                }) {
+                                    VStack(alignment: .leading) {
+                                        Text("Option \(index + 1)")
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                        Text(option)
+                                            .font(.caption2)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.leading)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                                    .background(Color.blue.opacity(0.1))
+                                    .cornerRadius(6)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
                     
                     // Status Bar
                     HStack {

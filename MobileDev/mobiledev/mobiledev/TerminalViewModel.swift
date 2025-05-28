@@ -14,6 +14,8 @@ class TerminalViewModel: ObservableObject {
     @Published var rawTerminalFeed: String = ""
     @Published var userCommands: [String] = []
     @Published var commandResponses: [CommandEntry] = []
+    @Published var detectedOptions: [String] = []
+    @Published var showOptionButtons: Bool = false
     
     private weak var terminal: LocalProcessTerminalView?
     private var claudeDetected = false
@@ -270,6 +272,46 @@ class TerminalViewModel: ObservableObject {
         terminal.send([0x03])
     }
     
+    func sendArrowUp() {
+        guard let terminal = terminal else { return }
+        // Send ESC [ A (up arrow)
+        terminal.send([0x1B, 0x5B, 0x41])
+    }
+    
+    func sendArrowDown() {
+        guard let terminal = terminal else { return }
+        // Send ESC [ B (down arrow)
+        terminal.send([0x1B, 0x5B, 0x42])
+    }
+    
+    func sendEnter() {
+        guard let terminal = terminal else { return }
+        terminal.send([13]) // CR
+    }
+    
+    func selectOption(_ optionNumber: Int) {
+        guard terminal != nil else { return }
+        
+        // Move to the right option
+        if optionNumber == 2 {
+            sendArrowDown()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.sendEnter()
+            }
+        } else if optionNumber == 3 {
+            sendArrowDown()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.sendArrowDown()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self.sendEnter()
+                }
+            }
+        } else {
+            // Option 1 - just press enter
+            sendEnter()
+        }
+    }
+    
     // MARK: - Claude Integration
     
     func checkForClaude() {
@@ -356,6 +398,81 @@ class TerminalViewModel: ObservableObject {
         return cleanedLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
+    private func detectOptionsInResponse(_ response: String) {
+        // Clear previous options
+        detectedOptions = []
+        showOptionButtons = false
+        
+        // Look for numbered options pattern (1. Yes, 2. Yes..., 3. No...)
+        let lines = response.split(separator: "\n")
+        var foundOptions: [String] = []
+        
+        for line in lines {
+            var lineStr = String(line)
+            
+            // Remove box characters if present
+            lineStr = lineStr.replacingOccurrences(of: "│", with: "")
+                            .replacingOccurrences(of: "❯", with: "")
+                            .trimmingCharacters(in: .whitespaces)
+            
+            // Check for patterns like "1. Yes" or "2. Yes, and don't ask again"
+            if lineStr.starts(with: "1.") {
+                foundOptions.append(lineStr)
+            } else if lineStr.starts(with: "2.") {
+                foundOptions.append(lineStr)
+            } else if lineStr.starts(with: "3.") {
+                foundOptions.append(lineStr)
+            }
+        }
+        
+        // If we found all three options, show the option buttons
+        if foundOptions.count >= 2 {
+            detectedOptions = foundOptions
+            showOptionButtons = true
+            print("🎯 Detected \(foundOptions.count) options: \(foundOptions)")
+            
+            // Also log the original response for debugging
+            print("📝 Original response contained: '\(response.prefix(200))...'")
+        }
+    }
+    
+    func detectOptionsInTerminal(_ terminalContent: String) {
+        // Direct detection from terminal content
+        let lines = terminalContent.split(separator: "\n")
+        var foundOptions: [String] = []
+        var foundDoYouWant = false
+        
+        for line in lines {
+            let lineStr = String(line)
+            
+            // Check for "Do you want to" question
+            if lineStr.contains("Do you want to") {
+                foundDoYouWant = true
+            }
+            
+            // Look for option lines with ❯ marker or just numbered
+            if lineStr.contains("❯ 1.") || lineStr.contains("│ ❯ 1.") {
+                let cleaned = lineStr.replacingOccurrences(of: "│", with: "")
+                                   .replacingOccurrences(of: "❯", with: "")
+                                   .trimmingCharacters(in: .whitespaces)
+                foundOptions.append(cleaned)
+            } else if (lineStr.contains("2.") || lineStr.contains("3.")) && foundDoYouWant {
+                let cleaned = lineStr.replacingOccurrences(of: "│", with: "")
+                                   .trimmingCharacters(in: .whitespaces)
+                if cleaned.starts(with: "2.") || cleaned.starts(with: "3.") {
+                    foundOptions.append(cleaned)
+                }
+            }
+        }
+        
+        // If we found options, show them
+        if foundOptions.count >= 2 {
+            detectedOptions = foundOptions
+            showOptionButtons = true
+            print("🎯 Detected \(foundOptions.count) options from terminal: \(foundOptions)")
+        }
+    }
+    
     private func extractResponseFromRawFeed(for index: Int) {
         guard index < commandResponses.count else { return }
         
@@ -434,6 +551,9 @@ class TerminalViewModel: ObservableObject {
                 commandResponses[index].rawResponse = cleanedResponse
                 commandResponses[index].isComplete = true
                 print("✅ Extracted response: '\(cleanedResponse.prefix(50))...'")
+                
+                // Check if this response contains numbered options
+                detectOptionsInResponse(cleanedResponse)
             }
         }
     }

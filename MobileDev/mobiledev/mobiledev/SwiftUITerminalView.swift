@@ -147,6 +147,12 @@ struct SwiftUITerminalView: NSViewRepresentable {
                         }
                     }
                     
+                    // Also detect options immediately when we see the pattern
+                    if content.contains("❯ 1.") && content.contains("2.") && content.contains("3.") {
+                        print("🎯 Options visible in terminal - triggering detection")
+                        self.parent.viewModel.detectOptionsInTerminal(content)
+                    }
+                    
                     // Get only new content since last capture for processing
                     let newContent = String(content.dropFirst(self.lastCapturedContent.count))
                     if !newContent.isEmpty {
