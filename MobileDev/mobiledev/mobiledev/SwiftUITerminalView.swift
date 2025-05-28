@@ -113,6 +113,12 @@ struct SwiftUITerminalView: NSViewRepresentable {
                     
                     // Check for esc pattern
                     let hasEscPattern = content.contains("esc to interrupt")
+                    
+                    // Also check if Claude is showing its prompt (ready for input)
+                    let claudePromptVisible = self.parent.viewModel.isClaudeRunning && 
+                                            (content.contains("│ >") && content.contains("│") && 
+                                             content.contains("? for shortcuts"))
+                    
                     if hasEscPattern != self.wasShowingEsc {
                         if hasEscPattern {
                             print("🔴 ESC pattern detected - Claude is generating")
@@ -124,6 +130,21 @@ struct SwiftUITerminalView: NSViewRepresentable {
                             self.parent.viewModel.extractPendingResponses()
                         }
                         self.wasShowingEsc = hasEscPattern
+                    } else if !hasEscPattern && claudePromptVisible && self.parent.viewModel.claudeState == "Generating response..." {
+                        // Claude is showing prompt but we think it's generating - fix the state
+                        print("🟡 Claude prompt detected - Ready for input")
+                        self.parent.viewModel.setGenerating(false)
+                        self.parent.viewModel.extractPendingResponses()
+                    }
+                    
+                    // Special case: If Claude just showed options (1., 2., 3.), extract immediately
+                    if content.contains("1.") && content.contains("2.") && content.contains("3.") && 
+                       content.contains("Do you want to") && !self.parent.viewModel.commandResponses.isEmpty {
+                        let lastIdx = self.parent.viewModel.commandResponses.count - 1
+                        if self.parent.viewModel.commandResponses[lastIdx].rawResponse.isEmpty {
+                            print("🎯 Detected Claude options - extracting full response")
+                            self.parent.viewModel.extractPendingResponses()
+                        }
                     }
                     
                     // Get only new content since last capture for processing

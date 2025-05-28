@@ -323,6 +323,39 @@ class TerminalViewModel: ObservableObject {
         }
     }
     
+    private func cleanResponseText(_ text: String) -> String {
+        // Remove UI elements from captured responses
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        var cleanedLines: [String] = []
+        
+        for line in lines {
+            let lineStr = String(line)
+            
+            // Skip UI chrome elements
+            if lineStr.contains("╭─") && lineStr.contains("─╮") {
+                continue
+            }
+            if lineStr.contains("╰─") && lineStr.contains("─╯") {
+                continue
+            }
+            // Skip empty prompt lines
+            if lineStr.contains("│") && lineStr.contains(">") && lineStr.contains("│") {
+                let trimmed = lineStr.replacingOccurrences(of: "│", with: "").trimmingCharacters(in: .whitespaces)
+                if trimmed == ">" || trimmed.isEmpty {
+                    continue
+                }
+            }
+            if lineStr.trimmingCharacters(in: .whitespaces) == "? for shortcuts" {
+                continue
+            }
+            
+            // Keep actual content
+            cleanedLines.append(lineStr)
+        }
+        
+        return cleanedLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
     private func extractResponseFromRawFeed(for index: Int) {
         guard index < commandResponses.count else { return }
         
@@ -336,34 +369,55 @@ class TerminalViewModel: ObservableObject {
             // For Claude command, extract welcome box
             if command == "claude" && afterCommand.contains("Welcome to Claude Code!") {
                 if let boxStart = afterCommand.range(of: "╭"),
-                   let boxEnd = afterCommand.range(of: "╰") {
-                    let endIdx = afterCommand.index(boxEnd.upperBound, offsetBy: min(50, afterCommand.distance(from: boxEnd.upperBound, to: afterCommand.endIndex)))
-                    commandResponses[index].rawResponse = String(afterCommand[boxStart.lowerBound..<endIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
+                   let welcomeEnd = afterCommand.range(of: "? for shortcuts") {
+                    // Extract up to and including "? for shortcuts"
+                    let endIdx = afterCommand.index(welcomeEnd.upperBound, offsetBy: min(2, afterCommand.distance(from: welcomeEnd.upperBound, to: afterCommand.endIndex)))
+                    let welcomeText = String(afterCommand[boxStart.lowerBound..<endIdx])
+                    commandResponses[index].rawResponse = welcomeText.trimmingCharacters(in: .whitespacesAndNewlines)
                     commandResponses[index].isComplete = true
                     print("✅ Extracted Claude welcome")
+                    
+                    // Claude is now ready
+                    DispatchQueue.main.async {
+                        self.claudeState = "Ready for input"
+                    }
                     return
                 }
             }
             
-            // For other commands, extract everything until next prompt
+            // For other commands, extract everything until we see the input prompt pattern
             var response = ""
             let lines = afterCommand.split(separator: "\n", omittingEmptySubsequences: false)
+            var skipEmptyAtStart = true
             
-            for line in lines {
+            // Look for patterns that indicate the end of response
+            for (index, line) in lines.enumerated() {
                 let lineStr = String(line)
+                let trimmed = lineStr.trimmingCharacters(in: .whitespaces)
                 
-                // Stop at next prompt
-                if lineStr.contains("╭─") && lineStr.contains("─╮") && lineStr.contains(">") {
+                // Check if we've reached the input prompt area
+                // Look for the pattern: empty line, then prompt box, or "Enter command..."
+                if lineStr.contains("Enter command...") {
                     break
                 }
-                if lineStr.contains("│ >") && lineStr.contains("│") {
-                    break
+                
+                // Check for prompt box pattern with next line context
+                if lineStr.contains("╭─") && lineStr.contains("─╮") {
+                    // Check if next line has just "> " (input prompt)
+                    if index + 1 < lines.count {
+                        let nextLine = String(lines[index + 1])
+                        let nextTrimmed = nextLine.replacingOccurrences(of: "│", with: "").trimmingCharacters(in: .whitespaces)
+                        if nextTrimmed == ">" {
+                            break
+                        }
+                    }
                 }
                 
-                // Skip empty lines at start
-                if response.isEmpty && lineStr.trimmingCharacters(in: .whitespaces).isEmpty {
+                // Skip empty lines only at the very beginning
+                if skipEmptyAtStart && trimmed.isEmpty {
                     continue
                 }
+                skipEmptyAtStart = false
                 
                 // Add line
                 if !response.isEmpty {
@@ -375,9 +429,11 @@ class TerminalViewModel: ObservableObject {
             // Clean and save
             response = response.trimmingCharacters(in: .whitespacesAndNewlines)
             if !response.isEmpty {
-                commandResponses[index].rawResponse = response
+                // Clean the response to remove UI elements
+                let cleanedResponse = cleanResponseText(response)
+                commandResponses[index].rawResponse = cleanedResponse
                 commandResponses[index].isComplete = true
-                print("✅ Extracted response: '\(response.prefix(50))...'")
+                print("✅ Extracted response: '\(cleanedResponse.prefix(50))...'")
             }
         }
     }
