@@ -40,12 +40,7 @@ struct ContentView: View {
                     .onAppear {
                         if let chatID = chatID {
                             // Create bridge for chat-terminal communication
-                            let bridge = TerminalBridge.shared.createBridge(for: chatID, terminalViewModel: viewModel)
-                            
-                            // Set up output handler for chat updates
-                            bridge.addOutputHandler { output in
-                                // This will be handled by the ChatViewModel
-                            }
+                            let _ = TerminalBridge.shared.createBridge(for: chatID, terminalViewModel: viewModel)
                         }
                     }
                     .overlay(alignment: .topTrailing) {

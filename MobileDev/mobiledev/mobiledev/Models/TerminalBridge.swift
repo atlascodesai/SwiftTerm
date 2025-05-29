@@ -27,11 +27,12 @@ class TerminalBridge {
 class ChatTerminalBridge: ObservableObject {
     let chatID: UUID
     private weak var terminalViewModel: TerminalViewModel?
-    private var outputBuffer = ""
-    private var outputHandlers: [(String) -> Void] = []
+    private var lastCommandIndex = -1
     
     @Published var isClaudeRunning = false
-    @Published var lastResponse = ""
+    @Published var isClaudeThinking = false
+    @Published var claudeState = ""
+    @Published var detectedOptions: [String] = []
     
     init(chatID: UUID, terminalViewModel: TerminalViewModel) {
         self.chatID = chatID
@@ -44,17 +45,18 @@ class ChatTerminalBridge: ObservableObject {
     @MainActor
     func launchClaude() {
         terminalViewModel?.launchClaude()
-        isClaudeRunning = true
+        // Will be set to true when we detect Claude has actually started
     }
     
     @MainActor
     func sendCommand(_ command: String) {
         terminalViewModel?.sendCommand(command)
+        // Track the command index so we can get its response later
+        if let vm = terminalViewModel {
+            lastCommandIndex = vm.commandResponses.count - 1
+        }
     }
     
-    func addOutputHandler(_ handler: @escaping (String) -> Void) {
-        outputHandlers.append(handler)
-    }
     
     // MARK: - Private
     
@@ -71,60 +73,31 @@ class ChatTerminalBridge: ObservableObject {
     private func checkTerminalOutput() {
         guard let viewModel = terminalViewModel else { return }
         
-        let currentOutput = viewModel.terminalOutput
+        // Update state from terminal
+        isClaudeRunning = viewModel.isClaudeRunning
+        isClaudeThinking = viewModel.claudeState.contains("Generating") || viewModel.claudeState.contains("thinking")
+        claudeState = viewModel.claudeState
+        detectedOptions = viewModel.detectedOptions
         
-        // Check if there's new output
-        if currentOutput != outputBuffer {
-            let newContent = String(currentOutput.dropFirst(outputBuffer.count))
-            outputBuffer = currentOutput
+        // Check if we have a response for our last command
+        if lastCommandIndex >= 0 && lastCommandIndex < viewModel.commandResponses.count {
+            let commandEntry = viewModel.commandResponses[lastCommandIndex]
             
-            // Process new output
-            if !newContent.isEmpty {
-                processOutput(newContent)
+            // If the command is complete and has a response, send it to chat
+            if commandEntry.isComplete && !commandEntry.rawResponse.isEmpty {
+                // Send the response to chat
+                ChatManager.shared.addMessage(to: chatID, content: commandEntry.rawResponse, sender: .claude)
+                
+                // Reset the index so we don't send it again
+                lastCommandIndex = -1
             }
         }
-        
-        // Update Claude running state
-        isClaudeRunning = viewModel.isClaudeRunning
     }
     
-    private func processOutput(_ output: String) {
-        // Clean up the output
-        let cleanedOutput = cleanOutput(output)
-        
-        // Notify handlers
-        for handler in outputHandlers {
-            handler(cleanedOutput)
-        }
-        
-        // Update last response
-        if isClaudeResponse(output) {
-            lastResponse = cleanedOutput
-        }
+    @MainActor
+    func selectOption(_ optionNumber: Int) {
+        terminalViewModel?.selectOption(optionNumber)
     }
     
-    private func cleanOutput(_ output: String) -> String {
-        // Remove ANSI escape codes
-        let ansiRegex = try! NSRegularExpression(pattern: "\\x1B\\[[0-9;]*m")
-        let range = NSRange(location: 0, length: output.utf16.count)
-        var cleaned = ansiRegex.stringByReplacingMatches(in: output, range: range, withTemplate: "")
-        
-        // Remove terminal control characters
-        cleaned = cleaned.replacingOccurrences(of: "\r", with: "")
-        
-        // Trim whitespace
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        return cleaned
-    }
     
-    private func isClaudeResponse(_ output: String) -> Bool {
-        // Simple heuristic to detect Claude responses
-        let lowerOutput = output.lowercased()
-        return lowerOutput.contains("claude") ||
-               lowerOutput.contains("i'll") ||
-               lowerOutput.contains("i can") ||
-               lowerOutput.contains("let me") ||
-               output.count > 50  // Longer outputs are likely Claude responses
-    }
 }

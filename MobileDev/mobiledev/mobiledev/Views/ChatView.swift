@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct ChatView: View {
     let chatID: UUID
@@ -8,6 +9,9 @@ struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
     @State private var messageText = ""
     @State private var isClaudeRunning = false
+    @State private var isClaudeThinking = false
+    @State private var claudeState = ""
+    @State private var detectedOptions: [String] = []
     @FocusState private var isInputFocused: Bool
     
     private var chat: Chat? {
@@ -30,6 +34,12 @@ struct ChatView: View {
             // Messages
             messagesView
             
+            // Option buttons when detected
+            if !detectedOptions.isEmpty && isClaudeRunning && !isClaudeThinking {
+                Divider()
+                optionButtonsView
+            }
+            
             // Input area (if not read-only)
             if !isReadOnly {
                 Divider()
@@ -40,6 +50,15 @@ struct ChatView: View {
         .onAppear {
             viewModel.startObserving()
             isInputFocused = true
+            
+            // Update Claude states
+            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+                let states = viewModel.getBridgeStates()
+                isClaudeRunning = states.isRunning
+                isClaudeThinking = states.isThinking
+                claudeState = states.state
+                detectedOptions = states.options
+            }
         }
         .onDisappear {
             viewModel.stopObserving()
@@ -75,11 +94,20 @@ struct ChatView: View {
             
             if isClaudeRunning {
                 HStack(spacing: 4) {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                    Text("Claude is thinking...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if isClaudeThinking {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text(claudeState)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.system(size: 12))
+                        Text(claudeState.isEmpty ? "Claude is ready" : claudeState)
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
                 }
             }
         }
@@ -92,7 +120,21 @@ struct ChatView: View {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     // Initial suggestion for new chats
                     if viewModel.messages.isEmpty && !isReadOnly {
-                        initialSuggestionView
+                        if isClaudeRunning && isClaudeThinking {
+                            // Claude is launching
+                            VStack(spacing: 16) {
+                                ProgressView()
+                                    .scaleEffect(1.2)
+                                Text("Claude is starting up...")
+                                    .font(.headline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
+                        } else if !isClaudeRunning {
+                            // Show launch button
+                            initialSuggestionView
+                        }
                     }
                     
                     ForEach(viewModel.messages) { message in
@@ -139,6 +181,37 @@ struct ChatView: View {
         .padding(.vertical, 40)
     }
     
+    private var optionButtonsView: some View {
+        HStack(spacing: 12) {
+            ForEach(Array(detectedOptions.enumerated()), id: \.offset) { index, option in
+                Button(action: {
+                    selectOption(index + 1)
+                }) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Option \(index + 1)")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Text(option)
+                            .font(.caption2)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+    
     private var inputView: some View {
         HStack(spacing: 12) {
             TextField("Type a message...", text: $messageText)
@@ -148,14 +221,14 @@ struct ChatView: View {
                 .onSubmit {
                     sendMessage()
                 }
-                .disabled(isClaudeRunning || chat?.state != .active)
+                .disabled(isClaudeThinking || chat?.state != .active)
             
             Button(action: sendMessage) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 28))
             }
             .buttonStyle(.plain)
-            .disabled(messageText.isEmpty || isClaudeRunning || chat?.state != .active)
+            .disabled(messageText.isEmpty || isClaudeThinking || chat?.state != .active)
         }
         .padding()
     }
@@ -164,6 +237,13 @@ struct ChatView: View {
     
     private func launchClaude() {
         viewModel.sendSystemAction(.launchClaude)
+        
+        // Add a message to show Claude is launching
+        let launchMessage = ChatMessage(
+            content: "Launching Claude Code...",
+            sender: .system
+        )
+        viewModel.addSystemMessage(launchMessage)
     }
     
     private func sendMessage() {
@@ -172,6 +252,10 @@ struct ChatView: View {
         let message = messageText
         messageText = ""
         viewModel.sendMessage(message)
+    }
+    
+    private func selectOption(_ optionNumber: Int) {
+        viewModel.selectOption(optionNumber)
     }
     
     private func copyMessage(_ message: ChatMessage) {
@@ -249,7 +333,8 @@ class ChatViewModel: ObservableObject {
     @Published var isWaitingForResponse = false
     
     private let chatID: UUID
-    private var terminalObserver: TerminalOutputObserver?
+    private var terminalBridge: ChatTerminalBridge?
+    private var cancellables = Set<AnyCancellable>()
     
     init(chatID: UUID) {
         self.chatID = chatID
@@ -257,14 +342,24 @@ class ChatViewModel: ObservableObject {
     }
     
     func startObserving() {
-        // Set up terminal output observation
-        terminalObserver = TerminalOutputObserver(chatID: chatID) { [weak self] output in
-            self?.handleTerminalOutput(output)
+        // Set up terminal bridge observation
+        // Wait a bit for the terminal window to be created
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            
+            if let bridge = TerminalBridge.shared.getBridge(for: self.chatID) {
+                self.terminalBridge = bridge
+                
+                // Observe messages from ChatManager
+                Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                    self?.loadMessages()
+                }
+            }
         }
     }
     
     func stopObserving() {
-        terminalObserver = nil
+        cancellables.removeAll()
     }
     
     func sendMessage(_ text: String) {
@@ -273,29 +368,68 @@ class ChatViewModel: ObservableObject {
         messages.append(userMessage)
         ChatManager.shared.addMessage(to: chatID, content: text, sender: .user)
         
+        // Try to get bridge if we don't have it yet
+        if terminalBridge == nil {
+            terminalBridge = TerminalBridge.shared.getBridge(for: chatID)
+        }
+        
         // Send to terminal
-        if let terminalBridge = TerminalBridge.shared.getBridge(for: chatID) {
+        if let bridge = terminalBridge {
             Task { @MainActor in
-                terminalBridge.sendCommand(text)
+                bridge.sendCommand(text)
             }
             isWaitingForResponse = true
+        } else {
+            // Bridge not ready, show error
+            let errorMessage = ChatMessage(
+                content: "Terminal not ready. Please wait a moment and try again.",
+                sender: .system
+            )
+            messages.append(errorMessage)
+            ChatManager.shared.addMessage(to: chatID, content: errorMessage.content, sender: .system)
+        }
+    }
+    
+    func selectOption(_ optionNumber: Int) {
+        // Try to get bridge if we don't have it yet
+        if terminalBridge == nil {
+            terminalBridge = TerminalBridge.shared.getBridge(for: chatID)
+        }
+        
+        if let bridge = terminalBridge {
+            Task { @MainActor in
+                bridge.selectOption(optionNumber)
+            }
+            
+            // Add a message to show the selection
+            let optionText = optionNumber <= bridge.detectedOptions.count ? 
+                bridge.detectedOptions[optionNumber - 1] : "Option \(optionNumber)"
+            let selectionMessage = ChatMessage(
+                content: "Selected: \(optionText)",
+                sender: .user
+            )
+            messages.append(selectionMessage)
+            ChatManager.shared.addMessage(to: chatID, content: selectionMessage.content, sender: .user)
         }
     }
     
     func sendSystemAction(_ action: SystemAction) {
         switch action {
         case .launchClaude:
-            if let terminalBridge = TerminalBridge.shared.getBridge(for: chatID) {
+            // Try to get bridge if we don't have it yet
+            if terminalBridge == nil {
+                terminalBridge = TerminalBridge.shared.getBridge(for: chatID)
+            }
+            
+            if let bridge = terminalBridge {
                 Task { @MainActor in
-                    terminalBridge.launchClaude()
+                    bridge.launchClaude()
                 }
-                
-                let systemMessage = ChatMessage(
-                    content: "Launching Claude...",
-                    sender: .system
-                )
-                messages.append(systemMessage)
-                ChatManager.shared.addMessage(to: chatID, content: systemMessage.content, sender: .system)
+            } else {
+                // Bridge not ready yet, retry after a delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.sendSystemAction(action)
+                }
             }
         }
     }
@@ -306,14 +440,21 @@ class ChatViewModel: ObservableObject {
         }
     }
     
-    private func handleTerminalOutput(_ output: String) {
-        // Parse Claude responses and update chat
-        if output.contains("Claude:") || isWaitingForResponse {
-            let claudeMessage = ChatMessage(content: output, sender: .claude)
-            messages.append(claudeMessage)
-            ChatManager.shared.addMessage(to: chatID, content: output, sender: .claude)
-            isWaitingForResponse = false
+    func addSystemMessage(_ message: ChatMessage) {
+        messages.append(message)
+        ChatManager.shared.addMessage(to: chatID, content: message.content, sender: .system)
+    }
+    
+    func getBridgeStates() -> (isRunning: Bool, isThinking: Bool, state: String, options: [String]) {
+        // Try to get bridge if we don't have it yet
+        if terminalBridge == nil {
+            terminalBridge = TerminalBridge.shared.getBridge(for: chatID)
         }
+        
+        guard let bridge = terminalBridge else {
+            return (false, false, "Terminal not connected", [])
+        }
+        return (bridge.isClaudeRunning, bridge.isClaudeThinking, bridge.claudeState, bridge.detectedOptions)
     }
 }
 

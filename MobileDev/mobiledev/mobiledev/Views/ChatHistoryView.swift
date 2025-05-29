@@ -162,11 +162,13 @@ struct ChatHistoryView: View {
     }
     
     private func openChatWindows(for chat: Chat) {
-        // Open chat window
-        openChatWindow(for: chat, readOnly: false)
-        
-        // Open terminal window
+        // Open terminal window first
         openTerminalWindow(for: chat)
+        
+        // Then open chat window with a small delay to ensure terminal is ready
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            self.openChatWindow(for: chat, readOnly: false)
+        }
     }
     
     private func openChatWindow(for chat: Chat, readOnly: Bool) {
