@@ -8,12 +8,17 @@
 import SwiftUI
 
 struct ContentView: View {
+    let chatID: UUID?
     @StateObject private var viewModel = TerminalViewModel()
     @State private var inputCommand = ""
     @State private var showAnalysisPanel = false
     @State private var expandedCommands: Set<UUID> = []
     @State private var copiedItemId: UUID?
     @State private var copiedRawFeed = false
+    
+    init(chatID: UUID? = nil) {
+        self.chatID = chatID
+    }
 
     var body: some View {
         NavigationStack {
@@ -32,6 +37,17 @@ struct ContentView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.black)
+                    .onAppear {
+                        if let chatID = chatID {
+                            // Create bridge for chat-terminal communication
+                            let bridge = TerminalBridge.shared.createBridge(for: chatID, terminalViewModel: viewModel)
+                            
+                            // Set up output handler for chat updates
+                            bridge.addOutputHandler { output in
+                                // This will be handled by the ChatViewModel
+                            }
+                        }
+                    }
                     .overlay(alignment: .topTrailing) {
                         // Analysis Panel Toggle
                         Button(action: { withAnimation { showAnalysisPanel.toggle() } }) {
