@@ -40,6 +40,14 @@ struct ChatView: View {
                 optionButtonsView
             }
             
+            // Debug: Show current state
+            if !detectedOptions.isEmpty {
+                Text("DEBUG: Options=\(detectedOptions.count), Claude=\(isClaudeRunning), Thinking=\(isClaudeThinking)")
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .padding(2)
+            }
+            
             // Input area (if not read-only)
             if !isReadOnly {
                 Divider()
@@ -51,13 +59,21 @@ struct ChatView: View {
             viewModel.startObserving()
             isInputFocused = true
             
-            // Update Claude states
+            // Set up bridge observation
+            setupBridgeObservation()
+            
+            // Update Claude states with initial polling and fallback
             Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
                 let states = viewModel.getBridgeStates()
                 isClaudeRunning = states.isRunning
                 isClaudeThinking = states.isThinking
                 claudeState = states.state
-                detectedOptions = states.options
+                
+                // Check for option changes
+                if detectedOptions != states.options {
+                    detectedOptions = states.options
+                    print("🎯 ChatView: Options updated: \(detectedOptions)")
+                }
             }
         }
         .onDisappear {
@@ -214,21 +230,21 @@ struct ChatView: View {
     
     private var inputView: some View {
         HStack(spacing: 12) {
-            TextField("Type a message...", text: $messageText)
+            TextField(!detectedOptions.isEmpty ? "Please select an option above..." : "Type a message...", text: $messageText)
                 .textFieldStyle(.plain)
                 .font(.body)
                 .focused($isInputFocused)
                 .onSubmit {
                     sendMessage()
                 }
-                .disabled(isClaudeThinking || chat?.state != .active)
+                .disabled(isClaudeThinking || chat?.state != .active || !detectedOptions.isEmpty)
             
             Button(action: sendMessage) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 28))
             }
             .buttonStyle(.plain)
-            .disabled(messageText.isEmpty || isClaudeThinking || chat?.state != .active)
+            .disabled(messageText.isEmpty || isClaudeThinking || chat?.state != .active || !detectedOptions.isEmpty)
         }
         .padding()
     }
@@ -261,6 +277,39 @@ struct ChatView: View {
     private func copyMessage(_ message: ChatMessage) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message.content, forType: .string)
+    }
+    
+    private func setupBridgeObservation() {
+        // Set up direct observation of the bridge from the view level
+        let chatID = self.chatID
+        let viewModel = self.viewModel
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let bridge = TerminalBridge.shared.getBridge(for: chatID) {
+                // Subscribe to bridge changes for immediate updates
+                let cancellable = bridge.objectWillChange.sink { _ in
+                    print("🔄 Bridge state changed - triggering UI update")
+                    // The actual state updates will happen via the polling timer
+                }
+                viewModel.addCancellable(cancellable)
+            }
+        }
+    }
+    
+    private func updateFromBridge() {
+        // Get the current bridge state
+        if let bridge = TerminalBridge.shared.getBridge(for: chatID) {
+            // Update view state from bridge
+            isClaudeRunning = bridge.isClaudeRunning
+            isClaudeThinking = bridge.isClaudeThinking
+            claudeState = bridge.claudeState
+            
+            // Check for option changes and update immediately
+            if detectedOptions != bridge.detectedOptions {
+                detectedOptions = bridge.detectedOptions
+                print("🎯 ChatView: Options updated via direct observation: \(detectedOptions)")
+            }
+        }
     }
 }
 
@@ -455,6 +504,10 @@ class ChatViewModel: ObservableObject {
             return (false, false, "Terminal not connected", [])
         }
         return (bridge.isClaudeRunning, bridge.isClaudeThinking, bridge.claudeState, bridge.detectedOptions)
+    }
+    
+    func addCancellable(_ cancellable: AnyCancellable) {
+        cancellables.insert(cancellable)
     }
 }
 

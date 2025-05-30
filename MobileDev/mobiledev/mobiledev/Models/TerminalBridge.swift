@@ -45,15 +45,21 @@ class ChatTerminalBridge: ObservableObject {
     @MainActor
     func launchClaude() {
         terminalViewModel?.launchClaude()
-        // Will be set to true when we detect Claude has actually started
+        // Track this as a command so we can capture the welcome message
+        if let vm = terminalViewModel {
+            lastCommandIndex = vm.commandResponses.count - 1
+        }
     }
     
     @MainActor
     func sendCommand(_ command: String) {
         terminalViewModel?.sendCommand(command)
-        // Track the command index so we can get its response later
-        if let vm = terminalViewModel {
-            lastCommandIndex = vm.commandResponses.count - 1
+        // Wait a bit for the command to be added to commandResponses
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            if let self = self, let vm = self.terminalViewModel {
+                self.lastCommandIndex = vm.commandResponses.count - 1
+                print("📝 TerminalBridge: Tracking command '\(command)' at index \(self.lastCommandIndex)")
+            }
         }
     }
     
@@ -75,16 +81,67 @@ class ChatTerminalBridge: ObservableObject {
         
         // Update state from terminal
         isClaudeRunning = viewModel.isClaudeRunning
-        isClaudeThinking = viewModel.claudeState.contains("Generating") || viewModel.claudeState.contains("thinking")
         claudeState = viewModel.claudeState
-        detectedOptions = viewModel.detectedOptions
+        
+        // More precise detection of thinking state
+        isClaudeThinking = viewModel.claudeState.lowercased().contains("generating") || 
+                          viewModel.claudeState.lowercased().contains("thinking") ||
+                          viewModel.claudeState.lowercased().contains("starting")
+        
+        // If we have the "Ready" state or are waiting for input, we're definitely not thinking
+        if viewModel.claudeState.lowercased().contains("ready") || 
+           viewModel.claudeState.lowercased().contains("waiting") ||
+           viewModel.claudeState == "Ready" {
+            isClaudeThinking = false
+        }
+        
+        // Special case: when options are detected, Claude is waiting for selection, not thinking
+        if !viewModel.detectedOptions.isEmpty && viewModel.isClaudeRunning {
+            isClaudeThinking = false
+            // Override the state to make it clear
+            if !claudeState.contains("option") {
+                claudeState = "Waiting for option selection"
+            }
+        }
+        
+        // Debug state changes
+        print("🔍 TerminalBridge state: claudeState='\(claudeState)', isThinking=\(isClaudeThinking), options=\(detectedOptions.count)")
+        
+        // Check for option changes
+        if detectedOptions != viewModel.detectedOptions {
+            detectedOptions = viewModel.detectedOptions
+            print("🎯 TerminalBridge: Options updated: \(detectedOptions)")
+            
+            // Force UI update by triggering objectWillChange
+            self.objectWillChange.send()
+        }
+        
+        // If Claude was generating and is now ready, extract pending responses
+        if !isClaudeThinking && viewModel.isClaudeRunning {
+            viewModel.extractPendingResponses()
+        }
+        
+        // Debug: Show all commands
+        print("📊 TerminalBridge: Total commands: \(viewModel.commandResponses.count)")
+        for (idx, cmd) in viewModel.commandResponses.enumerated() {
+            if cmd.isComplete && !cmd.rawResponse.isEmpty {
+                print("   [\(idx)] '\(cmd.command)' - Has response: \(cmd.rawResponse.prefix(50))...")
+            }
+        }
         
         // Check if we have a response for our last command
         if lastCommandIndex >= 0 && lastCommandIndex < viewModel.commandResponses.count {
             let commandEntry = viewModel.commandResponses[lastCommandIndex]
             
+            print("🔍 TerminalBridge: Checking command at index \(lastCommandIndex)")
+            print("   - Command: '\(commandEntry.command)'")
+            print("   - Is Complete: \(commandEntry.isComplete)")
+            print("   - Has Response: \(!commandEntry.rawResponse.isEmpty)")
+            print("   - Response Length: \(commandEntry.rawResponse.count)")
+            
             // If the command is complete and has a response, send it to chat
             if commandEntry.isComplete && !commandEntry.rawResponse.isEmpty {
+                print("✅ TerminalBridge: Sending response to chat")
                 // Send the response to chat
                 ChatManager.shared.addMessage(to: chatID, content: commandEntry.rawResponse, sender: .claude)
                 

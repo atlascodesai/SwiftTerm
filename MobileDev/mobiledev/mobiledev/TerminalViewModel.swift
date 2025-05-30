@@ -309,12 +309,18 @@ class TerminalViewModel: ObservableObject {
         commandResponses.append(selectionEntry)
 
         print("📝 User selected option \(optionNumber): \(selectedOptionText)")
+        
+        // Clear options after selection
+        detectedOptions = []
+        showOptionButtons = false
 
         // Move to the right option
         if optionNumber == 2 {
             sendArrowDown()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.sendEnter()
+                // Options 1 & 2: Claude will continue generating
+                self.claudeState = "Generating response..."
             }
         } else if optionNumber == 3 {
             sendArrowDown()
@@ -331,6 +337,8 @@ class TerminalViewModel: ObservableObject {
         } else {
             // Option 1 - just press enter
             sendEnter()
+            // Options 1 & 2: Claude will continue generating
+            claudeState = "Generating response..."
         }
     }
 
@@ -492,6 +500,11 @@ class TerminalViewModel: ObservableObject {
             detectedOptions = foundOptions
             showOptionButtons = true
             print("🎯 Detected \(foundOptions.count) options from terminal: \(foundOptions)")
+            
+            // When options are shown, Claude is waiting for input, not thinking
+            DispatchQueue.main.async {
+                self.claudeState = "Waiting for option selection"
+            }
         }
     }
 
