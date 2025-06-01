@@ -16,6 +16,7 @@ class TerminalViewModel: ObservableObject {
     @Published var commandResponses: [CommandEntry] = []
     @Published var detectedOptions: [String] = []
     @Published var showOptionButtons: Bool = false
+    @Published var optionsRequireTextInput: Bool = false  // Track if options need text response vs arrow selection
 
     private weak var terminal: LocalProcessTerminalView?
     private var claudeDetected = false
@@ -45,7 +46,7 @@ class TerminalViewModel: ObservableObject {
         self.terminal = terminal
     }
 
-    func sendCommand(_ command: String) {
+    func sendCommand(_ command: String, selectedOption: String? = nil) {
         guard !command.isEmpty else {
             print("❌ Cannot send command: command is empty")
             return
@@ -57,6 +58,9 @@ class TerminalViewModel: ObservableObject {
         }
 
         print("📤 Sending command: '\(command)'")
+        if let option = selectedOption {
+            print("📝 This is a selection for: \(option)")
+        }
         print("🔍 Terminal: \(terminal)")
         print("🔍 Terminal window: \(String(describing: terminal.window))")
         print("🔍 Terminal accepts first responder: \(terminal.acceptsFirstResponder)")
@@ -94,7 +98,8 @@ class TerminalViewModel: ObservableObject {
                 isComplete: false,
                 claudeGenerating: false,
                 terminalSnapshotBefore: snapshotBefore,
-                terminalSnapshotAfter: ""
+                terminalSnapshotAfter: "",
+                selectedOption: selectedOption
             )
             self.commandHistory.append(entry)
             self.commandResponses.append(entry)
@@ -296,49 +301,68 @@ class TerminalViewModel: ObservableObject {
         // Record the selection in command history
         let selectedOptionText = optionNumber <= detectedOptions.count ? detectedOptions[optionNumber - 1] : "Option \(optionNumber)"
 
-        // Create a new command entry for the selection
-        let selectionEntry = CommandEntry(
-            timestamp: Date(),
-            command: "Selected: \(selectedOptionText)",
-            rawResponse: "",
-            isClaudeCommand: isClaudeRunning,
-            isComplete: true,
-            selectedOption: selectedOptionText
-        )
-        commandHistory.append(selectionEntry)
-        commandResponses.append(selectionEntry)
-
         print("📝 User selected option \(optionNumber): \(selectedOptionText)")
         
         // Clear options after selection
+        let requiresText = optionsRequireTextInput
         detectedOptions = []
         showOptionButtons = false
+        optionsRequireTextInput = false
+        
+        // Mark that we're waiting for a response
+        waitingForResponse = true
 
-        // Move to the right option
-        if optionNumber == 2 {
-            sendArrowDown()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.sendEnter()
-                // Options 1 & 2: Claude will continue generating
-                self.claudeState = "Generating response..."
-            }
-        } else if optionNumber == 3 {
-            sendArrowDown()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.sendArrowDown()
+        // If options require text input, send the number as text
+        if requiresText {
+            // For text-based options, send the number directly
+            let commandText = String(optionNumber)
+            print("🔄 Sending option as text: '\(commandText)'")
+            
+            // Use sendCommand to properly track the command
+            sendCommand(commandText, selectedOption: selectedOptionText)
+            claudeState = "Generating response..."
+        } else {
+            // For arrow-based options, create an entry to track the selection
+            let entry = CommandEntry(
+                timestamp: Date(),
+                command: "Selected: \(selectedOptionText)",
+                rawResponse: "",
+                isClaudeCommand: isClaudeRunning,
+                isComplete: false,
+                claudeGenerating: false,
+                terminalSnapshotBefore: rawTerminalFeed,
+                terminalSnapshotAfter: "",
+                selectedOption: selectedOptionText
+            )
+            commandHistory.append(entry)
+            commandResponses.append(entry)
+            
+            // Use arrow navigation for UI-based options
+            if optionNumber == 2 {
+                sendArrowDown()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self.sendEnter()
-                    // Option 3 means Claude is waiting for input
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        self.claudeState = "Waiting for input"
+                    // Options 1 & 2: Claude will continue generating
+                    self.claudeState = "Generating response..."
+                }
+            } else if optionNumber == 3 {
+                sendArrowDown()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self.sendArrowDown()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        self.sendEnter()
+                        // Option 3 means Claude is waiting for input
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            self.claudeState = "Waiting for input"
+                        }
                     }
                 }
+            } else {
+                // Option 1 - just press enter
+                sendEnter()
+                // Options 1 & 2: Claude will continue generating
+                claudeState = "Generating response..."
             }
-        } else {
-            // Option 1 - just press enter
-            sendEnter()
-            // Options 1 & 2: Claude will continue generating
-            claudeState = "Generating response..."
         }
     }
 
@@ -352,7 +376,9 @@ class TerminalViewModel: ObservableObject {
     func launchClaude() {
         sendCommand("claude")
         isClaudeRunning = true
-        claudeState = "Starting..."
+        claudeState = "Starting Claude..."
+        wasGenerating = false  // Not generating yet, just starting
+        waitingForResponse = true  // Ensure we're waiting for the welcome message
         print("🚀 Claude launched, commands will be tracked")
     }
 
@@ -391,6 +417,9 @@ class TerminalViewModel: ObservableObject {
             if !entry.isComplete && entry.rawResponse.isEmpty {
                 print("📝 Extracting response for pending command: '\(entry.command)'")
                 extractResponseFromRawFeed(for: index)
+            } else if !entry.isComplete && !entry.rawResponse.isEmpty {
+                // Check if we need to capture more content
+                print("📝 Command '\(entry.command)' has partial response, checking for more...")
             }
         }
     }
@@ -471,26 +500,59 @@ class TerminalViewModel: ObservableObject {
         let lines = terminalContent.split(separator: "\n")
         var foundOptions: [String] = []
         var foundDoYouWant = false
+        var hasUIMarkers = false  // Track if we found ❯ markers
+        var foundQuestionPattern = false
 
         for line in lines {
             let lineStr = String(line)
 
-            // Check for "Do you want to" question
-            if lineStr.contains("Do you want to") {
-                foundDoYouWant = true
+            // Check for various question patterns
+            if lineStr.contains("Do you want to") || 
+               lineStr.contains("Would you like") || 
+               lineStr.contains("What would you prefer") ||
+               lineStr.contains("Please choose") {
+                foundQuestionPattern = true
             }
 
-            // Look for option lines with ❯ marker or just numbered
+            // Look for option lines with ❯ marker (UI selection)
             if lineStr.contains("❯ 1.") || lineStr.contains("│ ❯ 1.") {
+                hasUIMarkers = true
                 let cleaned = lineStr.replacingOccurrences(of: "│", with: "")
                                    .replacingOccurrences(of: "❯", with: "")
                                    .trimmingCharacters(in: .whitespaces)
                 foundOptions.append(cleaned)
-            } else if (lineStr.contains("2.") || lineStr.contains("3.")) && foundDoYouWant {
+            } else if (lineStr.contains("2.") || lineStr.contains("3.")) && (foundDoYouWant || foundQuestionPattern) {
                 let cleaned = lineStr.replacingOccurrences(of: "│", with: "")
                                    .trimmingCharacters(in: .whitespaces)
                 if cleaned.starts(with: "2.") || cleaned.starts(with: "3.") {
                     foundOptions.append(cleaned)
+                }
+            }
+        }
+        
+        // Also check for text-based numbered options (without UI markers)
+        if !hasUIMarkers && foundOptions.isEmpty {
+            // Look for pattern like "1. Option text" at the start of lines
+            for (index, line) in lines.enumerated() {
+                let lineStr = String(line).trimmingCharacters(in: .whitespaces)
+                
+                // Check if this line starts with "1."
+                if lineStr.starts(with: "1.") {
+                    foundOptions.append(lineStr)
+                    
+                    // Look for subsequent numbered options
+                    if index + 1 < lines.count {
+                        let nextLine = String(lines[index + 1]).trimmingCharacters(in: .whitespaces)
+                        if nextLine.starts(with: "2.") {
+                            foundOptions.append(nextLine)
+                        }
+                    }
+                    if index + 2 < lines.count {
+                        let nextLine = String(lines[index + 2]).trimmingCharacters(in: .whitespaces)
+                        if nextLine.starts(with: "3.") {
+                            foundOptions.append(nextLine)
+                        }
+                    }
                 }
             }
         }
@@ -499,7 +561,10 @@ class TerminalViewModel: ObservableObject {
         if foundOptions.count >= 2 {
             detectedOptions = foundOptions
             showOptionButtons = true
+            optionsRequireTextInput = !hasUIMarkers  // Text input needed if no UI markers
+            
             print("🎯 Detected \(foundOptions.count) options from terminal: \(foundOptions)")
+            print("📝 Options require text input: \(optionsRequireTextInput)")
             
             // When options are shown, Claude is waiting for input, not thinking
             DispatchQueue.main.async {
@@ -511,29 +576,106 @@ class TerminalViewModel: ObservableObject {
     private func extractResponseFromRawFeed(for index: Int) {
         guard index < commandResponses.count else { return }
 
-        let command = commandResponses[index].command
+        let entry = commandResponses[index]
+        let command = entry.command
         let content = rawTerminalFeed
 
+        // Special handling for arrow-based selections (command starts with "Selected:")
+        if command.starts(with: "Selected:") && entry.selectedOption != nil {
+            // For arrow-based selections, we need to find the response after the selection was made
+            // Use the snapshot to find where to start looking
+            let snapshotBefore = entry.terminalSnapshotBefore
+            
+            // Find content after the snapshot
+            if let snapshotRange = content.range(of: snapshotBefore) {
+                let afterSnapshot = String(content[snapshotRange.upperBound...])
+                
+                // Extract response from after the selection
+                var response = ""
+                let lines = afterSnapshot.split(separator: "\n", omittingEmptySubsequences: false)
+                var foundContent = false
+                
+                for line in lines {
+                    let lineStr = String(line)
+                    let trimmed = lineStr.trimmingCharacters(in: .whitespaces)
+                    
+                    // Skip empty lines at the beginning
+                    if !foundContent && trimmed.isEmpty {
+                        continue
+                    }
+                    
+                    // Start capturing when we see content
+                    if !trimmed.isEmpty && !lineStr.contains("❯") && !lineStr.contains("│ >") {
+                        foundContent = true
+                    }
+                    
+                    // Stop at next prompt
+                    if foundContent && (lineStr.contains("╭─") && lineStr.contains("─╮")) {
+                        break
+                    }
+                    
+                    if foundContent {
+                        if !response.isEmpty {
+                            response += "\n"
+                        }
+                        response += lineStr
+                    }
+                }
+                
+                // Clean and save
+                response = response.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !response.isEmpty {
+                    let cleanedResponse = cleanResponseText(response)
+                    commandResponses[index].rawResponse = cleanedResponse
+                    commandResponses[index].isComplete = true
+                    print("✅ Extracted response for arrow selection: '\(cleanedResponse.prefix(50))...'")
+                }
+                return
+            }
+        }
+
         // Find the command in the raw feed
-        if let commandRange = content.range(of: "> \(command)\n") ?? content.range(of: "> \(command)") {
+        var commandRange: Range<String.Index>?
+        
+        // For numeric commands, also check without the prompt
+        if command.count == 1 && command.first?.isNumber == true {
+            commandRange = content.range(of: "> \(command)\n") ?? 
+                          content.range(of: "> \(command)") ??
+                          content.range(of: "\(command)\n")
+        } else {
+            commandRange = content.range(of: "> \(command)\n") ?? content.range(of: "> \(command)")
+        }
+        
+        if let commandRange = commandRange {
             let afterCommand = String(content[commandRange.upperBound...])
 
             // For Claude command, extract welcome box
             if command == "claude" && afterCommand.contains("Welcome to Claude Code!") {
                 if let boxStart = afterCommand.range(of: "╭"),
-                   let welcomeEnd = afterCommand.range(of: "? for shortcuts") {
-                    // Extract up to and including "? for shortcuts"
-                    let endIdx = afterCommand.index(welcomeEnd.upperBound, offsetBy: min(2, afterCommand.distance(from: welcomeEnd.upperBound, to: afterCommand.endIndex)))
-                    let welcomeText = String(afterCommand[boxStart.lowerBound..<endIdx])
-                    commandResponses[index].rawResponse = welcomeText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    commandResponses[index].isComplete = true
-                    print("✅ Extracted Claude welcome")
+                   let boxEnd = afterCommand.range(of: "╰───") {
+                    // Find the end of the first box (welcome box)
+                    if let firstNewlineAfterBox = afterCommand[boxEnd.upperBound...].firstIndex(of: "\n") {
+                        let welcomeEndIdx = afterCommand.index(firstNewlineAfterBox, offsetBy: 1)
+                        let welcomeText = String(afterCommand[boxStart.lowerBound..<welcomeEndIdx])
+                        commandResponses[index].rawResponse = welcomeText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        commandResponses[index].isComplete = true
+                        print("✅ Extracted Claude welcome at index \(index)")
+                        print("📝 Welcome message length: \(welcomeText.count) chars")
+                        print("📝 First 100 chars: \(welcomeText.prefix(100))...")
+                        print("📝 Command is now complete: \(commandResponses[index].isComplete)")
+                        print("📝 Response stored: \(!commandResponses[index].rawResponse.isEmpty)")
 
-                    // Claude is now ready
-                    DispatchQueue.main.async {
-                        self.claudeState = "Ready for input"
+                        // Claude is now ready
+                        DispatchQueue.main.async {
+                            self.claudeState = "Ready for input"
+                            self.wasGenerating = false
+                        }
+                        return
                     }
-                    return
+                } else {
+                    print("⚠️ Could not find welcome box markers")
+                    print("   Looking for ╭ : \(afterCommand.contains("╭"))")
+                    print("   Looking for ╰─── : \(afterCommand.contains("╰───"))")
                 }
             }
 
@@ -585,11 +727,15 @@ class TerminalViewModel: ObservableObject {
                 let cleanedResponse = cleanResponseText(response)
                 commandResponses[index].rawResponse = cleanedResponse
                 commandResponses[index].isComplete = true
-                print("✅ Extracted response: '\(cleanedResponse.prefix(50))...'")
+                print("✅ Extracted response for '\(command)': '\(cleanedResponse.prefix(50))...'")
 
                 // Check if this response contains numbered options
                 detectOptionsInResponse(cleanedResponse)
+            } else {
+                print("⚠️ No response found for command '\(command)'")
             }
+        } else {
+            print("⚠️ Could not find command '\(command)' in terminal feed")
         }
     }
 
@@ -736,6 +882,9 @@ class TerminalViewModel: ObservableObject {
 
         // Accumulate all content we see
         capturedContent += output
+        
+        // Update raw terminal feed
+        rawTerminalFeed += output
 
         // If waiting for response and see Claude welcome, extract it
         if waitingForResponse && !commandResponses.isEmpty {
@@ -744,8 +893,31 @@ class TerminalViewModel: ObservableObject {
 
             if command == "claude" && output.contains("Welcome to Claude Code!") {
                 print("📝 Claude welcome detected")
+                // Mark that we're no longer waiting
+                self.waitingForResponse = false
+                
                 // Extract after a short delay to ensure full content
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    self.extractPendingResponses()
+                    // Ensure state is set correctly after welcome
+                    self.claudeState = "Ready for input"
+                    self.wasGenerating = false
+                    
+                    // Force extraction one more time to ensure it's captured
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        self.extractPendingResponses()
+                    }
+                }
+            }
+            
+            // For text-based option selections (commands like "1", "2", "3")
+            if command.count == 1 && command.first?.isNumber == true {
+                // Claude is responding to our option selection
+                print("📝 Processing response to option selection: '\(command)'")
+                
+                // Wait for Claude to finish generating the response
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    print("🔍 Extracting response for numeric option '\(command)'")
                     self.extractPendingResponses()
                 }
             }
@@ -756,8 +928,8 @@ class TerminalViewModel: ObservableObject {
             claudeDetected = true
         }
 
-        // Check for generation pattern in the terminal
-        if rawTerminalFeed.contains("esc to interrupt") {
+        // Check for generation pattern in the NEW output only
+        if output.contains("esc to interrupt") {
             if !wasGenerating {
                 print("⚡ Generation started")
                 claudeState = "Generating response..."
@@ -805,6 +977,35 @@ class TerminalViewModel: ObservableObject {
             if !commandResponses.isEmpty {
                 commandResponses[commandResponses.count - 1].isComplete = true
                 commandResponses[commandResponses.count - 1].claudeGenerating = false
+                
+                // Extract the response now that generation is complete
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    self.extractPendingResponses()
+                }
+            }
+        }
+        
+        // Additional check: if we see a clean prompt line, Claude is ready
+        let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isClaudeRunning && (trimmedOutput == ">" || (trimmedOutput.contains("> ") && trimmedOutput.count < 10)) {
+            if claudeState.contains("Generating") || claudeState.contains("response") {
+                print("✅ Detected prompt - Claude is ready")
+                claudeState = "Ready for input"
+                wasGenerating = false
+                
+                // Mark last command as complete
+                if !commandResponses.isEmpty {
+                    let lastIndex = commandResponses.count - 1
+                    if !commandResponses[lastIndex].isComplete {
+                        commandResponses[lastIndex].isComplete = true
+                        commandResponses[lastIndex].claudeGenerating = false
+                        
+                        // Extract the response
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            self.extractPendingResponses()
+                        }
+                    }
+                }
             }
         }
     }

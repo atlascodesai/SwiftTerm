@@ -11,6 +11,7 @@ The app uses SwiftTerm's `LocalProcessTerminalView` to run a shell process and c
 3. Extract command responses
 4. Detect and interact with Claude's option menus
 5. Track user selections
+6. Bridge terminal output to a chat interface
 
 ## Architecture
 
@@ -19,204 +20,229 @@ The app uses SwiftTerm's `LocalProcessTerminalView` to run a shell process and c
 1. **SwiftUITerminalView** - NSViewRepresentable wrapper that integrates SwiftTerm with SwiftUI
 2. **TerminalViewModel** - Central state management and business logic
 3. **ClaudeOutputAnalyzer** - Parses terminal output to detect Claude's activities
-4. **ContentView** - UI layer with special controls for Claude interaction
+4. **ContentView** - Terminal UI with special controls for Claude interaction
+5. **ChatView** - Chat interface showing commands and responses
+6. **TerminalBridge** - Connects terminal operations to chat display
+7. **ChatManager** - Manages chat sessions and message history
 
 ## Terminal Output Capture
 
-### Polling Mechanism
+### Real-time Processing
 
 ```swift
 // SwiftUITerminalView.swift
-func startOutputCapture() {
-    outputTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-        self.captureOutput()
+func dataReceived(slice: ArraySlice<UInt8>) {
+    let data = Data(slice)
+    if let string = String(data: data, encoding: .utf8) {
+        parent.viewModel.processCommandCompletion(string)
     }
 }
 ```
 
-- Polls terminal buffer every 0.5 seconds
-- Extracts full terminal content using `terminal.getBufferAsData()`
-- Tracks changes in content length to optimize processing
-- Only logs when content actually changes
+- Receives data in real-time as it arrives at the terminal
+- Updates `rawTerminalFeed` with accumulated content
+- Processes new output immediately for state changes
+- Tracks command completion and response extraction
 
 ### Content Flow
 
-1. **Raw Capture**: Full terminal buffer → `rawTerminalFeed`
-2. **New Content Detection**: Compares with previous capture to identify new output
-3. **State Analysis**: Parses for Claude-specific patterns
-4. **Response Extraction**: Captures command outputs for history
+1. **Raw Capture**: Terminal data → `processCommandCompletion()`
+2. **State Analysis**: Check for Claude patterns (generating, ready, etc.)
+3. **Response Extraction**: When command completes, extract response
+4. **Chat Bridge**: Send extracted responses to chat interface
 
 ## Claude State Detection
 
-### ESC Pattern Detection
+### Generation Pattern Detection
 
-The primary mechanism for detecting when Claude is generating a response:
+The system now checks only NEW output (not entire history):
 
 ```swift
-let hasEscPattern = content.contains("esc to interrupt")
+// Check for generation pattern in the NEW output only
+if output.contains("esc to interrupt") {
+    if !wasGenerating {
+        claudeState = "Generating response..."
+        wasGenerating = true
+    }
+}
 ```
-
-- **Pattern appears**: Claude is actively generating
-- **Pattern disappears**: Generation complete, ready for extraction
 
 ### Prompt Detection
 
-Detects when Claude is ready for input:
+Multiple methods to detect when Claude is ready:
 
-```swift
-let claudePromptVisible = self.parent.viewModel.isClaudeRunning && 
-                        (content.contains("│ >") && content.contains("│") && 
-                         content.contains("? for shortcuts"))
-```
+1. **Analyzer Detection**: `analysis.type == .ready`
+2. **Clean Prompt**: Output is just `>` or `> ` with minimal text
+3. **Terminal Content**: Bridge checks last 5 lines for prompt
 
 ### State Transitions
 
-1. **Not Running** → **Starting...** (when "claude" command sent)
-2. **Starting...** → **Ready for input** (when welcome box appears)
-3. **Ready for input** → **Generating response...** (when ESC pattern appears)
-4. **Generating response...** → **Ready for input** (when ESC pattern disappears)
-5. **Any state** → **Waiting for input** (after option 3 selected)
+1. **Not Running** → **Starting Claude...** (when "claude" command sent)
+2. **Starting Claude...** → **Ready for input** (when welcome box extracted)
+3. **Ready for input** → **Generating response...** (when "esc to interrupt" appears in new output)
+4. **Generating response...** → **Ready for input** (when prompt detected)
+5. **Any state** → **Waiting for option selection** (when options detected)
 
 ## Response Extraction
 
 ### Command Tracking
 
-Every user command creates a `CommandEntry`:
+Every command creates a `CommandEntry`:
 
 ```swift
 struct CommandEntry {
     let command: String
     var rawResponse: String = ""
+    let isClaudeCommand: Bool
     var isComplete: Bool = false
+    var claudeGenerating: Bool = false
     var selectedOption: String? = nil
 }
 ```
 
-### Extraction Process
+### Extraction Process (`extractResponseFromRawFeed`)
 
-1. **Find Command**: Locate "> command" in terminal output
-2. **Extract Content**: Capture everything after command until next prompt
-3. **Clean Response**: Remove UI elements (boxes, prompts, etc.)
-4. **Store Result**: Update CommandEntry with cleaned response
+1. **Find Command**: 
+   - For numeric commands: Also check without prompt ("> 1", "> 1\n", or just "1\n")
+   - For regular commands: Look for "> command\n" or "> command"
 
-### Cleaning Logic
+2. **Special Handling for Claude Welcome**:
+   ```swift
+   if command == "claude" && afterCommand.contains("Welcome to Claude Code!") {
+       // Extract from ╭ to ╰─── plus one newline
+       // This captures just the welcome box
+   }
+   ```
 
-```swift
-private func cleanResponseText(_ text: String) -> String {
-    // Skip lines with:
-    // - Box borders (╭─, ╰─)
-    // - Empty prompt lines (│ > │)
-    // - UI hints ("? for shortcuts")
-}
-```
+3. **General Extraction**:
+   - Skip empty lines at start
+   - Continue until hitting input prompt box
+   - Clean UI elements from response
+
+### Terminal Bridge
+
+The `TerminalBridge` connects terminal to chat:
+
+1. **Command Tracking**: 
+   - Monitors `lastCommandIndex` in commandResponses
+   - Updates when new commands are sent
+
+2. **Response Detection**:
+   - Checks every 0.5 seconds if command is complete with response
+   - Sends response to ChatManager when ready
+
+3. **Special Cases**:
+   - Claude launch: Waits 0.2s then finds claude command
+   - Option selections: Updates index after selection
 
 ## Option Menu Detection
 
-### Pattern Recognition
+### Two Types of Options
 
-When Claude presents options, we detect:
+1. **UI-Based Options** (with `❯` markers):
+   ```
+   │ ❯ 1. Yes                                          │
+   │   2. Yes, and don't ask again this session        │
+   │   3. No, and tell Claude what to do differently   │
+   ```
 
-```
-│ Do you want to create poem.md?                    │
-│ ❯ 1. Yes                                          │
-│   2. Yes, and don't ask again this session        │
-│   3. No, and tell Claude what to do differently   │
-```
+2. **Text-Based Options** (plain numbered lists):
+   ```
+   1. Replace it with a new poem
+   2. Add another poem to the existing file  
+   3. Create a different poem file (like poem4.md)
+   ```
 
 ### Detection Logic
 
-1. **Direct Terminal Scan**: Looks for "❯ 1." pattern
-2. **Context Validation**: Ensures "Do you want to" question present
-3. **Option Extraction**: Parses and cleans option text
-4. **UI Update**: Shows option buttons
-
-### Option Selection
-
-When user clicks an option button:
-
-1. **Navigation**: Sends arrow keys to move selection
-   - Option 1: Just press Enter
-   - Option 2: Down arrow → Enter
-   - Option 3: Down arrow → Down arrow → Enter
-
-2. **Tracking**: Creates special CommandEntry marked as selection
-
-3. **State Update**: Option 3 triggers "Waiting for input" state
-
-## Terminal Control
-
-### Sending Commands
-
 ```swift
-func sendCommand(_ command: String) {
-    terminal.send(txt: command)  // Send text
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-        terminal.send([13])  // Send CR (Enter)
-    }
+func detectOptionsInTerminal(_ terminalContent: String) {
+    // Check for UI markers (❯)
+    let hasUIMarkers = lineStr.contains("❯ 1.")
+    
+    // Set flag for how to handle selection
+    optionsRequireTextInput = !hasUIMarkers
 }
 ```
 
-### Special Keys
+### Option Selection
 
-- **Enter**: `[13]` (Carriage Return)
-- **Up Arrow**: `[0x1B, 0x5B, 0x41]` (ESC [ A)
-- **Down Arrow**: `[0x1B, 0x5B, 0x42]` (ESC [ B)
-- **Ctrl+C**: `[0x03]` (Interrupt)
+**UI-Based Options** (arrow navigation):
+- Option 1: Press Enter
+- Option 2: Down arrow → Enter
+- Option 3: Down arrow × 2 → Enter
 
-## Edge Cases Handled
+**Text-Based Options** (send number):
+- Send the number as text ("1", "2", or "3")
+- Uses `sendCommand()` to properly track response
 
-### Terminal Clearing
+## Chat Integration
 
-- Terminal sometimes clears/redraws (e.g., 1596 → 734 chars)
-- Solution: Capture immediately when generation completes
+### Message Flow
 
-### Timing Issues
-
-- Responses may not be fully rendered when ESC disappears
-- Solution: Multiple detection points and state tracking
-
-### Option Menu Variations
-
-- Options may have different formatting/markers
-- Solution: Flexible pattern matching, removes box characters
+1. **User Command**: ChatView → TerminalBridge → TerminalViewModel
+2. **Terminal Execution**: Command runs, output captured
+3. **Response Extraction**: When complete, response extracted
+4. **Chat Update**: TerminalBridge → ChatManager → ChatView
 
 ### State Synchronization
 
-- UI state may drift from actual terminal state
-- Solution: Multiple verification points, defensive state updates
+- Terminal state propagates to chat via bridge
+- Options detected in terminal appear as buttons in chat
+- Text input disabled when options are present
 
-## UI Integration
+## Current Issues & Solutions
 
-### Command History
+### Welcome Message Display
 
-- Shows all commands with expand/collapse
-- Special formatting for option selections
-- Copy functionality for responses
+**Issue**: Welcome message is extracted but shows "Response: false" in logs
 
-### Option Buttons
+**Current Approach**:
+- Special extraction for claude command
+- Extracts from ╭ to ╰─── plus newline
+- Should include welcome box but may miss "? for shortcuts"
 
-- Appear dynamically when options detected
-- Send appropriate key sequences
-- Track selection in history
+### State Management
 
-### Status Indicators
+**Fixed Issue**: State was getting stuck on "Generating response..."
+- Changed from checking entire `rawTerminalFeed` to just new `output`
+- Prevents old "esc to interrupt" text from triggering generation state
 
-- Real-time Claude state display
-- Visual feedback for operations
-- Progress indicators during generation
+### Option Button Display
+
+**Working**: 
+- Detects both UI and text-based options
+- Shows appropriate buttons in chat
+- Handles selection correctly
+- Fixed issue where "Starting Claude..." was treated as thinking
 
 ## Best Practices
 
-1. **Always update raw feed first** - Ensures complete content available
-2. **Use multiple detection methods** - Redundancy prevents missed states
-3. **Clean extracted content** - Remove UI elements for clarity
-4. **Track state transitions** - Helps debug unexpected behavior
-5. **Log key events** - Essential for troubleshooting
+1. **Check new output only** - Don't scan entire terminal history for state changes
+2. **Track command indices** - Essential for bridge to know which response goes where
+3. **Handle timing carefully** - Use delays when needed for command tracking
+4. **Clean extracted content** - Remove UI elements for chat display
+5. **Multiple detection methods** - Redundancy prevents missed states
+6. **Log key events** - Essential for troubleshooting
+
+## Debugging Tips
+
+1. **Console Logs**: Watch for:
+   - `📝 TerminalBridge: Tracking command`
+   - `🔍 TerminalBridge state:`
+   - `✅ Extracted response`
+   - `🎯 Detected options`
+
+2. **Common Issues**:
+   - Response shows "false" = extraction failed
+   - State stuck = check what's triggering state changes
+   - Options not appearing = check detection patterns
+   - Messages not in chat = check bridge connection
 
 ## Future Improvements
 
-1. **Smarter extraction** - ML-based response boundary detection
-2. **Performance optimization** - Reduce polling frequency when idle
-3. **More Claude features** - Handle file operations, build status
-4. **Better error recovery** - Handle terminal crashes gracefully
-5. **Accessibility** - Screen reader support for terminal content
+1. **Better extraction** - More robust response boundary detection
+2. **Streaming responses** - Show Claude's output as it generates
+3. **File operation tracking** - Show file changes in chat
+4. **Error recovery** - Handle terminal crashes gracefully
+5. **Performance** - Optimize polling and extraction

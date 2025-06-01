@@ -12,6 +12,7 @@ struct ChatView: View {
     @State private var isClaudeThinking = false
     @State private var claudeState = ""
     @State private var detectedOptions: [String] = []
+    @State private var optionsRequireTextInput = false
     @FocusState private var isInputFocused: Bool
     
     private var chat: Chat? {
@@ -72,7 +73,9 @@ struct ChatView: View {
                 // Check for option changes
                 if detectedOptions != states.options {
                     detectedOptions = states.options
+                    optionsRequireTextInput = states.optionsRequireText
                     print("🎯 ChatView: Options updated: \(detectedOptions)")
+                    print("📝 ChatView: Options require text: \(optionsRequireTextInput)")
                 }
             }
         }
@@ -136,18 +139,7 @@ struct ChatView: View {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     // Initial suggestion for new chats
                     if viewModel.messages.isEmpty && !isReadOnly {
-                        if isClaudeRunning && isClaudeThinking {
-                            // Claude is launching
-                            VStack(spacing: 16) {
-                                ProgressView()
-                                    .scaleEffect(1.2)
-                                Text("Claude is starting up...")
-                                    .font(.headline)
-                                    .foregroundColor(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 40)
-                        } else if !isClaudeRunning {
+                        if !isClaudeRunning {
                             // Show launch button
                             initialSuggestionView
                         }
@@ -198,33 +190,49 @@ struct ChatView: View {
     }
     
     private var optionButtonsView: some View {
-        HStack(spacing: 12) {
-            ForEach(Array(detectedOptions.enumerated()), id: \.offset) { index, option in
-                Button(action: {
-                    selectOption(index + 1)
-                }) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Option \(index + 1)")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                        Text(option)
-                            .font(.caption2)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(Color.blue.opacity(0.1))
-                    .cornerRadius(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
+        VStack(spacing: 8) {
+            // Show hint about selection method
+            if optionsRequireTextInput {
+                Text("Click an option to send as text response:")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
+            
+            HStack(spacing: 12) {
+                ForEach(Array(detectedOptions.enumerated()), id: \.offset) { index, option in
+                    Button(action: {
+                        selectOption(index + 1)
+                    }) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Option \(index + 1)")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                if optionsRequireTextInput {
+                                    Text("(sends '\(index + 1)')")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            Text(option)
+                                .font(.caption2)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal)
         }
-        .padding(.horizontal)
         .padding(.vertical, 8)
     }
     
@@ -494,16 +502,16 @@ class ChatViewModel: ObservableObject {
         ChatManager.shared.addMessage(to: chatID, content: message.content, sender: .system)
     }
     
-    func getBridgeStates() -> (isRunning: Bool, isThinking: Bool, state: String, options: [String]) {
+    func getBridgeStates() -> (isRunning: Bool, isThinking: Bool, state: String, options: [String], optionsRequireText: Bool) {
         // Try to get bridge if we don't have it yet
         if terminalBridge == nil {
             terminalBridge = TerminalBridge.shared.getBridge(for: chatID)
         }
         
         guard let bridge = terminalBridge else {
-            return (false, false, "Terminal not connected", [])
+            return (false, false, "Terminal not connected", [], false)
         }
-        return (bridge.isClaudeRunning, bridge.isClaudeThinking, bridge.claudeState, bridge.detectedOptions)
+        return (bridge.isClaudeRunning, bridge.isClaudeThinking, bridge.claudeState, bridge.detectedOptions, bridge.optionsRequireTextInput)
     }
     
     func addCancellable(_ cancellable: AnyCancellable) {
