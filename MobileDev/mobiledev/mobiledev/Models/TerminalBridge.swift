@@ -146,6 +146,16 @@ class ChatTerminalBridge: ObservableObject {
             viewModel.extractPendingResponses()
         }
         
+        // Safety check: if all commands are complete but we think we're generating, fix the state
+        if viewModel.isClaudeRunning && isClaudeThinking {
+            let allComplete = viewModel.commandResponses.allSatisfy { $0.isComplete }
+            if allComplete && viewModel.commandResponses.count > 0 {
+                print("🔧 Safety fix: All commands complete but state shows generating - resetting")
+                viewModel.claudeState = "Ready for input"
+                isClaudeThinking = false
+            }
+        }
+        
         // Special handling for Claude startup - extract welcome message
         if viewModel.claudeState == "Starting Claude..." && viewModel.rawTerminalFeed.contains("Welcome to Claude Code!") {
             print("🎆 TerminalBridge: Claude welcome detected, extracting responses")
@@ -183,6 +193,9 @@ class ChatTerminalBridge: ObservableObject {
                 print("   [\(idx)] CLAUDE COMMAND - Complete: \(cmd.isComplete), Response: \(!cmd.rawResponse.isEmpty)")
                 if !cmd.rawResponse.isEmpty {
                     print("      Response preview: \(cmd.rawResponse.prefix(100))...")
+                    print("      Full response length: \(cmd.rawResponse.count) chars")
+                } else {
+                    print("      ⚠️ Response is empty!")
                 }
             } else if cmd.isComplete && !cmd.rawResponse.isEmpty {
                 print("   [\(idx)] '\(cmd.command)' - Has response: \(cmd.rawResponse.prefix(50))...")

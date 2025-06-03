@@ -111,6 +111,7 @@ struct ContentView: View {
                             }
                             .foregroundColor(.green)
                         }
+                        
                     }
                     .padding()
 

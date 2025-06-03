@@ -296,7 +296,7 @@ struct ChatView: View {
             if let bridge = TerminalBridge.shared.getBridge(for: chatID) {
                 // Subscribe to bridge changes for immediate updates
                 let cancellable = bridge.objectWillChange.sink { _ in
-                    print("🔄 Bridge state changed - triggering UI update")
+                    // Bridge state changed - UI will update automatically
                     // The actual state updates will happen via the polling timer
                 }
                 viewModel.addCancellable(cancellable)
@@ -361,14 +361,27 @@ struct MessageBubbleView: View {
                         .padding(.vertical, 8)
                 } else {
                     // Regular message bubble
-                    Text(message.content)
-                        .font(.body)
-                        .foregroundColor(textColor)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(bubbleColor)
-                        .cornerRadius(18)
-                        .textSelection(.enabled)
+                    // Check if this is a box drawing (contains ╭ or ╰)
+                    if message.content.contains("╭") || message.content.contains("╰") {
+                        // Display as monospace for terminal boxes
+                        Text(message.content)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(textColor)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(bubbleColor)
+                            .cornerRadius(18)
+                            .textSelection(.enabled)
+                    } else {
+                        Text(message.content)
+                            .font(.body)
+                            .foregroundColor(textColor)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(bubbleColor)
+                            .cornerRadius(18)
+                            .textSelection(.enabled)
+                    }
                     
                     // Timestamp
                     Text(message.timestamp, style: .time)

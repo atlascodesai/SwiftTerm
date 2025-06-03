@@ -239,10 +239,82 @@ func detectOptionsInTerminal(_ terminalContent: String) {
    - Options not appearing = check detection patterns
    - Messages not in chat = check bridge connection
 
+## Proposed Improvements
+
+### 1. Enhanced State Machine
+
+Replace simple "generating"/"ready" states with more granular tracking:
+
+```swift
+enum ClaudeState {
+    case notRunning
+    case launching
+    case showingWelcome
+    case readyForTextInput
+    case readyForUISelection(options: [String])
+    case readyForTextSelection(options: [String])
+    case streaming(content: String, marker: StreamMarker)
+    case performingFileOperation(operation: FileOperation)
+    case showingEditPreview(file: String)
+    case waitingConfirmation(type: ConfirmationType)
+    case error(message: String)
+}
+```
+
+### 2. Pattern Detection Improvements
+
+Key markers to detect:
+- `⏺` - Claude response/streaming marker
+- `⎿` - File operation result (indented)
+- `❯` - UI selection mode (arrow navigation)
+- Numbered lists without `❯` - Text selection mode
+- Box patterns (`╭───╮`, `╰───╯`) - UI elements
+
+### 3. Streaming Response Support
+
+**Architecture**:
+1. Detect `⏺` marker to start streaming
+2. Use `StreamBuffer` to accumulate content
+3. Update chat message progressively (every 0.5s or on paragraph breaks)
+4. Finalize when prompt returns
+
+**Implementation**:
+- Add `isStreaming` flag to ChatMessage
+- Use `ChatManager.updateLastMessage()` for progressive updates
+- Show typing indicator during streaming
+- Toggle feature for local vs remote sessions
+
+### 4. Better Response Extraction
+
+**Welcome Message Fix**:
+- Capture entire welcome sequence including box and first prompt
+- Wait for complete output before marking as complete
+
+**Multi-segment Responses**:
+- Track file operations separately from main response
+- Capture edit previews as structured data
+- Handle error messages distinctly
+
+### 5. Implementation Steps
+
+1. **Phase 1**: Fix welcome message capture (immediate)
+   - Update extraction logic to capture full welcome
+   - Improve timing/completion detection
+
+2. **Phase 2**: Enhanced state machine (next)
+   - Integrate ClaudeStateManager
+   - Update UI to reflect granular states
+   - Better option detection
+
+3. **Phase 3**: Streaming support (future)
+   - Add streaming message support
+   - Progressive UI updates
+   - Toggle for local/remote
+
 ## Future Improvements
 
-1. **Better extraction** - More robust response boundary detection
-2. **Streaming responses** - Show Claude's output as it generates
-3. **File operation tracking** - Show file changes in chat
-4. **Error recovery** - Handle terminal crashes gracefully
-5. **Performance** - Optimize polling and extraction
+1. **File operation tracking** - Show file changes inline in chat
+2. **Error recovery** - Handle terminal crashes gracefully  
+3. **Performance** - Optimize with Combine instead of polling
+4. **Rich formatting** - Parse and display code blocks, lists, etc.
+5. **Command suggestions** - Auto-complete based on context

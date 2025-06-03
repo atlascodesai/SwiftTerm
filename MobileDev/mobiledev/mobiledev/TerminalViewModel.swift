@@ -76,6 +76,24 @@ class TerminalViewModel: ObservableObject {
         // Capture terminal state before sending command
         let snapshotBefore = rawTerminalFeed
 
+        // Track command BEFORE sending (important for claude command)
+        let entry = CommandEntry(
+            timestamp: Date(),
+            command: command,
+            rawResponse: "",
+            isClaudeCommand: self.isClaudeRunning || command == "claude",
+            isComplete: false,
+            claudeGenerating: false,
+            terminalSnapshotBefore: snapshotBefore,
+            terminalSnapshotAfter: "",
+            selectedOption: selectedOption
+        )
+        self.commandHistory.append(entry)
+        self.commandResponses.append(entry)
+        self.userCommands.append(command)
+        
+        print("📝 Added command to tracking: index=\(self.commandResponses.count - 1)")
+
         // Send the command
         print("🔄 Sending command text...")
         terminal.send(txt: command)
@@ -88,23 +106,6 @@ class TerminalViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             print("🔄 Sending Enter key...")
             terminal.send([13]) // CR (carriage return)
-
-            // Track command after sending
-            let entry = CommandEntry(
-                timestamp: Date(),
-                command: command,
-                rawResponse: "",
-                isClaudeCommand: self.isClaudeRunning,
-                isComplete: false,
-                claudeGenerating: false,
-                terminalSnapshotBefore: snapshotBefore,
-                terminalSnapshotAfter: "",
-                selectedOption: selectedOption
-            )
-            self.commandHistory.append(entry)
-            self.commandResponses.append(entry)
-            self.userCommands.append(command)
-
             print("✅ Command sent with CR (13)")
         }
     }
@@ -380,6 +381,8 @@ class TerminalViewModel: ObservableObject {
         wasGenerating = false  // Not generating yet, just starting
         waitingForResponse = true  // Ensure we're waiting for the welcome message
         print("🚀 Claude launched, commands will be tracked")
+        print("📊 Command responses count: \(commandResponses.count)")
+        print("📊 Waiting for response: \(waitingForResponse)")
     }
 
     func exitClaude() {
@@ -412,14 +415,24 @@ class TerminalViewModel: ObservableObject {
     }
 
     func extractPendingResponses() {
+        print("🔄 extractPendingResponses called - checking \(commandResponses.count) commands")
+        
         // Extract responses for any incomplete commands
         for (index, entry) in commandResponses.enumerated() {
             if !entry.isComplete && entry.rawResponse.isEmpty {
-                print("📝 Extracting response for pending command: '\(entry.command)'")
+                print("📝 Extracting response for pending command at index \(index): '\(entry.command)'")
                 extractResponseFromRawFeed(for: index)
             } else if !entry.isComplete && !entry.rawResponse.isEmpty {
                 // Check if we need to capture more content
                 print("📝 Command '\(entry.command)' has partial response, checking for more...")
+            } else if entry.isComplete {
+                print("✅ Command '\(entry.command)' already complete")
+                // Special check: if it's complete but has no response, try one more time
+                if entry.rawResponse.isEmpty && entry.command == "claude" {
+                    print("⚠️ Claude command is complete but has no response - retrying extraction")
+                    commandResponses[index].isComplete = false
+                    extractResponseFromRawFeed(for: index)
+                }
             }
         }
     }
@@ -578,7 +591,18 @@ class TerminalViewModel: ObservableObject {
 
         let entry = commandResponses[index]
         let command = entry.command
+        
+        // Use a sliding window approach - only look at recent content
+        // This prevents issues when the terminal gets very long
         let content = rawTerminalFeed
+        let recentContent: String
+        if content.count > 10000 {
+            // Only look at the last 10KB of content
+            let startIndex = content.index(content.endIndex, offsetBy: -10000)
+            recentContent = String(content[startIndex...])
+        } else {
+            recentContent = content
+        }
 
         // Special handling for arrow-based selections (command starts with "Selected:")
         if command.starts(with: "Selected:") && entry.selectedOption != nil {
@@ -634,48 +658,152 @@ class TerminalViewModel: ObservableObject {
             }
         }
 
+        // Debug the search
+        print("🔍 Looking for command '\(command)' in raw feed")
+        print("📝 Using recent content length: \(recentContent.count) (total: \(content.count))")
+        
+        // Special case for claude command - if the terminal was cleared, we won't find the command
+        // but we know the welcome message is the response
+        if command == "claude" && recentContent.contains("Welcome to Claude Code!") {
+            print("🎯 Special case: Claude welcome detected without command")
+            
+            // Extract just the welcome box without the extra formatting
+            if let boxStart = recentContent.range(of: "╭"),
+               let boxEnd = recentContent.range(of: "╰─") {
+                // Find the end of the box
+                let fromBoxEnd = recentContent[boxEnd.lowerBound...]
+                if let lineEnd = fromBoxEnd.firstIndex(of: "\n") {
+                    let welcomeEndIdx = recentContent.index(after: lineEnd)
+                    let welcomeBox = String(recentContent[boxStart.lowerBound..<welcomeEndIdx])
+                    
+                    // Clean it up - remove ANSI codes if any
+                    let cleanedBox = welcomeBox
+                        .replacingOccurrences(of: "\u{1B}[?25l", with: "") // cursor hide
+                        .replacingOccurrences(of: "\u{1B}[2J", with: "") // clear screen
+                        .replacingOccurrences(of: "\u{1B}[H", with: "") // home cursor
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    
+                    commandResponses[index].rawResponse = cleanedBox
+                    commandResponses[index].isComplete = true
+                    print("✅ Extracted Claude welcome (special case)")
+                    print("📝 Response length: \(cleanedBox.count)")
+                    
+                    // Claude is now ready
+                    DispatchQueue.main.async {
+                        self.claudeState = "Ready for input"
+                        self.wasGenerating = false
+                    }
+                    return
+                }
+            }
+            
+            // Fallback: just get the content without terminal cruft
+            let welcomeText = recentContent
+                .replacingOccurrences(of: "\u{1B}[?25l", with: "")
+                .replacingOccurrences(of: "\u{1B}[2J", with: "")
+                .replacingOccurrences(of: "\u{1B}[H", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            commandResponses[index].rawResponse = welcomeText
+            commandResponses[index].isComplete = true
+            print("✅ Extracted Claude welcome (fallback)")
+            
+            // Claude is now ready
+            DispatchQueue.main.async {
+                self.claudeState = "Ready for input"
+                self.wasGenerating = false
+            }
+            return
+        }
+        
         // Find the command in the raw feed
         var commandRange: Range<String.Index>?
         
         // For numeric commands, also check without the prompt
         if command.count == 1 && command.first?.isNumber == true {
-            commandRange = content.range(of: "> \(command)\n") ?? 
-                          content.range(of: "> \(command)") ??
-                          content.range(of: "\(command)\n")
+            commandRange = recentContent.range(of: "> \(command)\n") ?? 
+                          recentContent.range(of: "> \(command)") ??
+                          recentContent.range(of: "\(command)\n")
         } else {
-            commandRange = content.range(of: "> \(command)\n") ?? content.range(of: "> \(command)")
+            // For claude command, try multiple patterns
+            if command == "claude" {
+                commandRange = recentContent.range(of: "> \(command)\n") ?? 
+                              recentContent.range(of: "> \(command)") ??
+                              recentContent.range(of: "% \(command)\n") ??
+                              recentContent.range(of: "% \(command)") ??
+                              recentContent.range(of: "\(command)\n")
+                
+                if commandRange == nil {
+                    print("⚠️ Could not find 'claude' command with standard patterns")
+                    print("📝 Searching for just 'claude' in content...")
+                    if let simpleRange = recentContent.range(of: "claude") {
+                        print("✅ Found 'claude' at position \(recentContent.distance(from: recentContent.startIndex, to: simpleRange.lowerBound))")
+                        commandRange = simpleRange
+                    }
+                }
+            } else {
+                commandRange = recentContent.range(of: "> \(command)\n") ?? recentContent.range(of: "> \(command)")
+            }
         }
         
         if let commandRange = commandRange {
-            let afterCommand = String(content[commandRange.upperBound...])
+            let afterCommand = String(recentContent[commandRange.upperBound...])
 
-            // For Claude command, extract welcome box
+            // For Claude command, extract welcome box and first prompt
             if command == "claude" && afterCommand.contains("Welcome to Claude Code!") {
-                if let boxStart = afterCommand.range(of: "╭"),
-                   let boxEnd = afterCommand.range(of: "╰───") {
-                    // Find the end of the first box (welcome box)
-                    if let firstNewlineAfterBox = afterCommand[boxEnd.upperBound...].firstIndex(of: "\n") {
-                        let welcomeEndIdx = afterCommand.index(firstNewlineAfterBox, offsetBy: 1)
-                        let welcomeText = String(afterCommand[boxStart.lowerBound..<welcomeEndIdx])
-                        commandResponses[index].rawResponse = welcomeText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        commandResponses[index].isComplete = true
-                        print("✅ Extracted Claude welcome at index \(index)")
-                        print("📝 Welcome message length: \(welcomeText.count) chars")
-                        print("📝 First 100 chars: \(welcomeText.prefix(100))...")
-                        print("📝 Command is now complete: \(commandResponses[index].isComplete)")
-                        print("📝 Response stored: \(!commandResponses[index].rawResponse.isEmpty)")
-
-                        // Claude is now ready
-                        DispatchQueue.main.async {
-                            self.claudeState = "Ready for input"
-                            self.wasGenerating = false
+                print("🎯 Found Welcome to Claude Code! - attempting extraction")
+                print("📝 afterCommand length: \(afterCommand.count)")
+                print("📝 First 200 chars of afterCommand:")
+                print(afterCommand.prefix(200))
+                
+                // Look for the complete welcome sequence including the box and the prompt after it
+                if let boxStart = afterCommand.range(of: "╭") {
+                    print("✅ Found box start ╭")
+                    
+                    // Find everything up to the first standalone "> " prompt after the box
+                    let lines = afterCommand.split(separator: "\n", omittingEmptySubsequences: false)
+                    var captureLines: [String] = []
+                    var foundBox = false
+                    var foundBoxEnd = false
+                    
+                    for line in lines {
+                        let lineStr = String(line)
+                        captureLines.append(lineStr)
+                        
+                        // Check if we found the box start
+                        if lineStr.contains("╭─") {
+                            foundBox = true
                         }
-                        return
+                        
+                        // Check if we found the box end
+                        if foundBox && lineStr.contains("╰─") {
+                            foundBoxEnd = true
+                        }
+                        
+                        // Stop after we find the prompt after the box
+                        if foundBoxEnd && lineStr.trimmingCharacters(in: .whitespaces) == ">" {
+                            break
+                        }
                     }
+                    
+                    let welcomeText = captureLines.joined(separator: "\n")
+                    commandResponses[index].rawResponse = welcomeText
+                    commandResponses[index].isComplete = true
+                    print("✅ Extracted Claude welcome at index \(index)")
+                    print("📝 Welcome message length: \(welcomeText.count) chars")
+                    print("📝 Full welcome:\n\(welcomeText)")
+
+                    // Claude is now ready
+                    DispatchQueue.main.async {
+                        self.claudeState = "Ready for input"
+                        self.wasGenerating = false
+                    }
+                    return
                 } else {
-                    print("⚠️ Could not find welcome box markers")
-                    print("   Looking for ╭ : \(afterCommand.contains("╭"))")
-                    print("   Looking for ╰─── : \(afterCommand.contains("╰───"))")
+                    print("⚠️ Could not find welcome box start marker in afterCommand")
+                    print("📝 Checking what characters we have:")
+                    for char in afterCommand.prefix(50) {
+                        print("   Char: '\(char)' Unicode: \(char.unicodeScalars.map { String($0.value, radix: 16) })")
+                    }
                 }
             }
 
@@ -878,6 +1006,12 @@ class TerminalViewModel: ObservableObject {
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             print("📨 Processing new content (\(output.count) chars)")
+            if output.contains("Welcome to Claude Code!") {
+                print("🎯 DETECTED: Welcome to Claude Code! in output")
+            }
+            if output.contains("╭") {
+                print("🎯 DETECTED: Box start ╭ in output")
+            }
         }
 
         // Accumulate all content we see
@@ -886,18 +1020,30 @@ class TerminalViewModel: ObservableObject {
         // Update raw terminal feed
         rawTerminalFeed += output
 
-        // If waiting for response and see Claude welcome, extract it
+        // If waiting for response, check for completion
         if waitingForResponse && !commandResponses.isEmpty {
             let lastIndex = commandResponses.count - 1
             let command = commandResponses[lastIndex].command
 
+            // Special case for Claude welcome
             if command == "claude" && output.contains("Welcome to Claude Code!") {
-                print("📝 Claude welcome detected")
+                print("📝 Claude welcome detected in processCommandCompletion")
+                print("📝 Raw terminal feed length: \(rawTerminalFeed.count)")
+                print("📝 Command at index \(lastIndex): '\(command)'")
+                print("📝 Is command complete: \(commandResponses[lastIndex].isComplete)")
+                
+                // IMPORTANT: Don't mark as complete yet - we need to extract the response first
+                if commandResponses[lastIndex].isComplete {
+                    print("⚠️ Command was already marked complete - resetting")
+                    commandResponses[lastIndex].isComplete = false
+                }
+                
                 // Mark that we're no longer waiting
                 self.waitingForResponse = false
                 
                 // Extract after a short delay to ensure full content
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    print("📝 Calling extractPendingResponses after delay...")
                     self.extractPendingResponses()
                     // Ensure state is set correctly after welcome
                     self.claudeState = "Ready for input"
@@ -905,7 +1051,18 @@ class TerminalViewModel: ObservableObject {
                     
                     // Force extraction one more time to ensure it's captured
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        print("📝 Second extraction attempt...")
                         self.extractPendingResponses()
+                        
+                        // Debug: Check if extraction worked
+                        if self.commandResponses[lastIndex].isComplete && !self.commandResponses[lastIndex].rawResponse.isEmpty {
+                            print("✅ Claude welcome extracted successfully!")
+                            print("📝 Response length: \(self.commandResponses[lastIndex].rawResponse.count)")
+                        } else {
+                            print("❌ Claude welcome extraction failed!")
+                            print("   isComplete: \(self.commandResponses[lastIndex].isComplete)")
+                            print("   rawResponse empty: \(self.commandResponses[lastIndex].rawResponse.isEmpty)")
+                        }
                     }
                 }
             }
@@ -918,6 +1075,17 @@ class TerminalViewModel: ObservableObject {
                 // Wait for Claude to finish generating the response
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     print("🔍 Extracting response for numeric option '\(command)'")
+                    self.extractPendingResponses()
+                }
+            }
+            
+            // For regular commands, check if we see a prompt indicating completion
+            if output.contains("> ") && output.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix(">") {
+                print("📝 Detected command completion - prompt returned")
+                self.waitingForResponse = false
+                
+                // Extract the response
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self.extractPendingResponses()
                 }
             }
@@ -935,6 +1103,11 @@ class TerminalViewModel: ObservableObject {
                 claudeState = "Generating response..."
                 wasGenerating = true
             }
+        } else if wasGenerating && (output.contains("> ") || output.contains("? for shortcuts")) {
+            // Generation has ended - we see the prompt
+            print("⚡ Generation ended - prompt detected")
+            claudeState = "Ready for input"
+            wasGenerating = false
         }
 
         // Analyze the NEW output directly
@@ -987,8 +1160,9 @@ class TerminalViewModel: ObservableObject {
         
         // Additional check: if we see a clean prompt line, Claude is ready
         let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isClaudeRunning && (trimmedOutput == ">" || (trimmedOutput.contains("> ") && trimmedOutput.count < 10)) {
-            if claudeState.contains("Generating") || claudeState.contains("response") {
+        if isClaudeRunning && (trimmedOutput == ">" || (trimmedOutput.contains("> ") && trimmedOutput.count < 10) || 
+                               trimmedOutput == "? for shortcuts" || output.contains("? for shortcuts")) {
+            if wasGenerating || claudeState.contains("Generating") || claudeState.contains("response") {
                 print("✅ Detected prompt - Claude is ready")
                 claudeState = "Ready for input"
                 wasGenerating = false

@@ -62,17 +62,35 @@ enum ChatState: String, Codable, CaseIterable {
 
 struct ChatMessage: Identifiable, Codable {
     let id: UUID
-    let content: String
+    var content: String
     let sender: MessageSender
     let timestamp: Date
     var isComplete: Bool
+    var isStreaming: Bool = false
+    var streamBuffer: String = "" // For accumulating partial content
     
-    init(content: String, sender: MessageSender, isComplete: Bool = true) {
+    init(content: String, sender: MessageSender, isComplete: Bool = true, isStreaming: Bool = false) {
         self.id = UUID()
         self.content = content
         self.sender = sender
         self.timestamp = Date()
-        self.isComplete = isComplete
+        self.isComplete = isComplete && !isStreaming
+        self.isStreaming = isStreaming
+        if isStreaming {
+            self.streamBuffer = content
+        }
+    }
+    
+    mutating func appendStreamContent(_ newContent: String) {
+        streamBuffer += newContent
+        content = streamBuffer
+    }
+    
+    mutating func finalizeStream() {
+        isStreaming = false
+        isComplete = true
+        content = streamBuffer
+        streamBuffer = ""
     }
 }
 
