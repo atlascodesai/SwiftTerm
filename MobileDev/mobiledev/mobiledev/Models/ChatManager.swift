@@ -102,11 +102,89 @@ class ChatManager: ObservableObject {
     
     // MARK: - Message Management
     
-    func addMessage(to chatID: UUID, content: String, sender: MessageSender) {
+    func addMessage(to chatID: UUID, content: String, sender: MessageSender, messageType: MessageType = .text, metadata: MessageMetadata? = nil) {
         if let index = chats.firstIndex(where: { $0.id == chatID }) {
-            let message = ChatMessage(content: content, sender: sender)
+            let message = ChatMessage(content: content, sender: sender, messageType: messageType, metadata: metadata)
             chats[index].addMessage(message)
             saveChats()
+        }
+    }
+    
+    func addMessage(to chatID: UUID, message: ChatMessage) {
+        if let index = chats.firstIndex(where: { $0.id == chatID }) {
+            chats[index].addMessage(message)
+            saveChats()
+        }
+    }
+    
+    func updateMessage(in chatID: UUID, messageId: UUID, content: String, messageType: MessageType? = nil, isStreaming: Bool? = nil) {
+        if let chatIndex = chats.firstIndex(where: { $0.id == chatID }),
+           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+            
+            var updatedMessage = chats[chatIndex].messages[messageIndex]
+            updatedMessage.content = content
+            
+            if let type = messageType {
+                updatedMessage.messageType = type
+            }
+            
+            if let streaming = isStreaming {
+                updatedMessage.isStreaming = streaming
+            }
+            
+            chats[chatIndex].messages[messageIndex] = updatedMessage
+            
+            // Don't save while streaming to avoid excessive disk writes
+            if !(isStreaming ?? false) {
+                saveChats()
+            }
+        }
+    }
+    
+    /// Add a structured message from streaming parser
+    func addStreamMessage(to chatID: UUID, streamMessage: StreamMessage, sender: MessageSender) {
+        let (messageType, metadata) = convertStreamMessageType(streamMessage)
+        let formattedContent = formatStreamMessage(streamMessage)
+        
+        print("📋 ChatManager: Adding stream message - Type: \(messageType), Tool: \(metadata?.toolName ?? "none")")
+        print("   Content: '\(formattedContent.prefix(100))...'")
+        
+        addMessage(to: chatID, content: formattedContent, sender: sender, messageType: messageType, metadata: metadata)
+    }
+    
+    private func convertStreamMessageType(_ message: StreamMessage) -> (MessageType, MessageMetadata?) {
+        switch message.type {
+        case .text:
+            return (.text, nil)
+        case .bashCommand:
+            return (.toolUse, MessageMetadata(toolName: "bash"))
+        case .fileOperation:
+            return (.toolUse, MessageMetadata(toolName: "file"))
+        case .codeBlock:
+            return (.code, MessageMetadata(language: "swift"))  // Would need to parse language
+        case .error:
+            return (.error, nil)
+        case .success, .warning, .progress:
+            return (.status, MessageMetadata(statusType: String(describing: message.type)))
+        default:
+            return (.text, nil)
+        }
+    }
+    
+    private func formatStreamMessage(_ message: StreamMessage) -> String {
+        switch message.type {
+        case .bashCommand:
+            return "$ " + message.cleanContent
+        case .fileOperation:
+            return "📄 " + message.cleanContent
+        case .success:
+            return "✅ " + message.cleanContent
+        case .error:
+            return "❌ " + message.cleanContent
+        case .warning:
+            return "⚠️ " + message.cleanContent
+        default:
+            return message.content  // Keep ANSI codes for text
         }
     }
     

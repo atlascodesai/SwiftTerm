@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import SwiftTerm
 
 struct ChatView: View {
     let chatID: UUID
@@ -137,6 +138,11 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
+                    // Debug info
+                    Text("Messages count: \(viewModel.messages.count)")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                    
                     // Initial suggestion for new chats
                     if viewModel.messages.isEmpty && !isReadOnly {
                         if !isClaudeRunning {
@@ -326,15 +332,15 @@ struct ChatView: View {
 struct MessageBubbleView: View {
     let message: ChatMessage
     
-    private var bubbleColor: Color {
+    private var bubbleColor: SwiftUI.Color {
         switch message.sender {
         case .user: return .accentColor
-        case .claude: return Color(.systemGray).opacity(0.2)
+        case .claude: return SwiftUI.Color(.systemGray).opacity(0.2)
         case .system: return .clear
         }
     }
     
-    private var textColor: Color {
+    private var textColor: SwiftUI.Color {
         switch message.sender {
         case .user: return .white
         case .claude: return .primary
@@ -408,6 +414,7 @@ class ChatViewModel: ObservableObject {
     
     init(chatID: UUID) {
         self.chatID = chatID
+        print("🔧 ChatViewModel: Initializing for chat \(chatID)")
         loadMessages()
     }
     
@@ -507,6 +514,9 @@ class ChatViewModel: ObservableObject {
     private func loadMessages() {
         if let chat = ChatManager.shared.chats.first(where: { $0.id == chatID }) {
             messages = chat.messages
+            print("📊 ChatViewModel: Loaded \(messages.count) messages for chat \(chatID)")
+        } else {
+            print("❌ ChatViewModel: No chat found with ID \(chatID)")
         }
     }
     

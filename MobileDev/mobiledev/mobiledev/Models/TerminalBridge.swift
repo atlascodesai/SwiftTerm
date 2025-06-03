@@ -10,7 +10,8 @@ class TerminalBridge {
     private init() {}
     
     func createBridge(for chatID: UUID, terminalViewModel: TerminalViewModel) -> ChatTerminalBridge {
-        let bridge = ChatTerminalBridge(chatID: chatID, terminalViewModel: terminalViewModel)
+        // Always use real-time streaming bridge for best experience
+        let bridge = RealTimeStreamingBridge(chatID: chatID, terminalViewModel: terminalViewModel)
         bridges[chatID] = bridge
         return bridge
     }
@@ -26,7 +27,7 @@ class TerminalBridge {
 
 class ChatTerminalBridge: ObservableObject {
     let chatID: UUID
-    private weak var terminalViewModel: TerminalViewModel?
+    internal weak var terminalViewModel: TerminalViewModel?
     private var lastCommandIndex = -1
     
     @Published var isClaudeRunning = false
@@ -94,7 +95,7 @@ class ChatTerminalBridge: ObservableObject {
     }
     
     @MainActor
-    private func checkTerminalOutput() {
+    internal func checkTerminalOutput() {
         guard let viewModel = terminalViewModel else { return }
         
         // Update state from terminal
@@ -219,10 +220,10 @@ class ChatTerminalBridge: ObservableObject {
                 // For claude command, ensure we send the welcome message properly
                 if commandEntry.command == "claude" {
                     print("🎆 TerminalBridge: Sending Claude welcome message to chat")
-                    // Send as Claude message since it's Claude's welcome
+                    // Send raw terminal output for authentic look
                     ChatManager.shared.addMessage(to: chatID, content: commandEntry.rawResponse, sender: .claude)
                 } else {
-                    // Send the response to chat
+                    // Send raw response to preserve terminal formatting
                     ChatManager.shared.addMessage(to: chatID, content: commandEntry.rawResponse, sender: .claude)
                 }
                 

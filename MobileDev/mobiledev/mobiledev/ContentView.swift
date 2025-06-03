@@ -9,7 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     let chatID: UUID?
-    @StateObject private var viewModel = TerminalViewModel()
+    @StateObject var viewModel = TerminalViewModel()
     @State private var inputCommand = ""
     @State private var showAnalysisPanel = false
     @State private var expandedCommands: Set<UUID> = []

@@ -68,8 +68,10 @@ struct ChatMessage: Identifiable, Codable {
     var isComplete: Bool
     var isStreaming: Bool = false
     var streamBuffer: String = "" // For accumulating partial content
+    var messageType: MessageType = .text
+    var metadata: MessageMetadata?
     
-    init(content: String, sender: MessageSender, isComplete: Bool = true, isStreaming: Bool = false) {
+    init(content: String, sender: MessageSender, isComplete: Bool = true, isStreaming: Bool = false, messageType: MessageType = .text, metadata: MessageMetadata? = nil) {
         self.id = UUID()
         self.content = content
         self.sender = sender
@@ -79,6 +81,8 @@ struct ChatMessage: Identifiable, Codable {
         if isStreaming {
             self.streamBuffer = content
         }
+        self.messageType = messageType
+        self.metadata = metadata
     }
     
     mutating func appendStreamContent(_ newContent: String) {
@@ -102,4 +106,18 @@ enum MessageSender: String, Codable {
     var isUser: Bool {
         self == .user
     }
+}
+
+enum MessageType: String, Codable {
+    case text
+    case code
+    case toolUse
+    case status
+    case error
+}
+
+struct MessageMetadata: Codable {
+    var language: String?  // For code blocks
+    var toolName: String?  // For tool use
+    var statusType: String?  // For status messages
 }
